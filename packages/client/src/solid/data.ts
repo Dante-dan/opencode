@@ -1704,6 +1704,8 @@ export function createData(config: CreateDataInput) {
               next = response.cursor.next ?? undefined
               if (!options?.all) break
             } while (next)
+            // A release or re-sync can replace the cursor while this page is in flight.
+            if (store.session.messageCursor[sessionID] !== cursor) return
             // A jump through history publishes once, not once per page of offscreen messages.
             const existing = store.session.message[sessionID] ?? []
             const ids = new Set(existing.map((item) => item.id))
