@@ -1161,6 +1161,19 @@ it.effect("prefers a structured provider message over the code fallback", () =>
   }),
 )
 
+it.effect("surfaces a structured provider message instead of a generic SDK status", () =>
+  Effect.gen(function* () {
+    const error = yield* streamFailure(
+      apiCallError({
+        message: "Provider request failed with HTTP 400",
+        statusCode: 400,
+        responseBody: '{"error":{"message":"The selected model does not support images"}}',
+      }),
+    )
+    expect(error.message).toBe("The selected model does not support images")
+  }),
+)
+
 it.effect("falls back to the status alone for malformed response bodies", () =>
   Effect.gen(function* () {
     const error = yield* streamFailure(

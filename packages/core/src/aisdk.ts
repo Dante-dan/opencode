@@ -1057,7 +1057,7 @@ function providerErrorMessage(error: APICallError) {
   const code = value === undefined ? undefined : String(value)
   const prefix =
     error.statusCode === undefined ? "Provider request failed" : `Provider request failed with HTTP ${error.statusCode}`
-  return error.message.trim() !== "" ? error.message : (message ?? (code === undefined ? prefix : `${prefix}: ${code}`))
+  return message ?? (error.message.trim() !== "" ? error.message : code === undefined ? prefix : `${prefix}: ${code}`)
 }
 
 export const node = makeLocationNode({ service: Service, layer: locationLayer, deps: [] })
