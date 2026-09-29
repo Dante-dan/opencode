@@ -31,6 +31,22 @@ describe("new session workspace selection", () => {
     ).toBe("main")
   })
 
+  test("keeps the worktree used to open a draft ahead of the saved destination", () => {
+    const input = {
+      enabled: true,
+      directory: "C:\\repos\\app-wt1",
+      projectWorktree: "C:\\repos\\app",
+      workspaces: ["C:\\repos\\app-wt1"],
+    }
+    expect(resolveNewSessionWorktree({ ...input, fallback: "main" })).toBe(input.directory)
+    expect(resolveNewSessionWorktree({ ...input, fallback: "create" })).toBe(input.directory)
+    expect(resolveNewSessionWorktree({ ...input, selected: "main" })).toBe("main")
+    expect(resolveNewSessionWorktree({ ...input, directory: input.projectWorktree, fallback: "create" })).toBe(
+      "create",
+    )
+    expect(resolveNewSessionWorktree({ ...input, workspaces: [], fallback: "main" })).toBe("main")
+  })
+
   test("keeps local selection when the cached project path is stale", () => {
     const input = { enabled: true, directory: "C:/Projects/repo", projectWorktree: "D:/Projects/repo" }
     expect(resolveNewSessionWorktree(input)).toBe("main")
