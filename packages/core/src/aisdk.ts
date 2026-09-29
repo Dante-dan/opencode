@@ -1029,7 +1029,7 @@ const ProviderErrorDetail = Schema.Struct({
 })
 const ProviderErrorBody = Schema.Struct({
   ...ProviderErrorDetail.fields,
-  error: Schema.optionalKey(ProviderErrorDetail),
+  error: Schema.optionalKey(Schema.Union([ProviderErrorDetail, Schema.String])),
 })
 const decodeProviderError = Schema.decodeUnknownOption(
   Schema.Union([ProviderErrorBody, Schema.fromJsonString(ProviderErrorBody)]),
@@ -1043,7 +1043,10 @@ function unknownErrorMessage(error: unknown) {
         ? error
         : ([error, errorValue(error)]
             .map((value) => Option.getOrUndefined(decodeProviderError(value)))
-            .flatMap((decoded) => [decoded?.error?.message, decoded?.message])
+            .flatMap((decoded) => [
+              typeof decoded?.error === "string" ? decoded.error : decoded?.error?.message,
+              decoded?.message,
+            ])
             .find((value) => value?.trim()) ?? "")
   return message.trim() === "" ? "Provider request failed" : message
 }
@@ -1051,7 +1054,9 @@ function unknownErrorMessage(error: unknown) {
 function providerErrorMessage(error: APICallError) {
   const data = Option.getOrUndefined(decodeProviderError(error.data))
   const body = Option.getOrUndefined(decodeProviderError(error.responseBody))
-  const details = [data?.error, data, body?.error, body]
+  const details = [data?.error, data, body?.error, body].map((detail) =>
+    typeof detail === "string" ? { message: detail } : detail,
+  )
   const message = details.map((detail) => detail?.message).find((value) => value?.trim())
   const value = details.map((detail) => detail?.code).find((value) => value !== undefined)
   const code = value === undefined ? undefined : String(value)
