@@ -1225,7 +1225,7 @@ test("reaches the complete transcript in order after a release", async () => {
   }
 })
 
-test("drops an in-flight older page when its cursor was replaced by a release", async () => {
+test("drops an in-flight older page after release and re-sync even when the cursor matches", async () => {
   const total = 120
   const pageLimit = 20
   const messages = Array.from({ length: total }, (_, index) => ({
@@ -1263,10 +1263,12 @@ test("drops an in-flight older page when its cursor was replaced by a release", 
     const pending = setup.data.session.message.loadMore("ses_scroll")
     await Bun.sleep(20)
     setup.data.session.message.release("ses_scroll")
+    await setup.data.session.message.sync("ses_scroll")
+    expect(setup.data.session.message.list("ses_scroll")).toHaveLength(pageLimit)
     releaseGate()
     await pending
-    expect(setup.data.session.message.list("ses_scroll")).toEqual([])
-    expect(setup.data.session.message.more("ses_scroll")).toBe(false)
+    expect(setup.data.session.message.list("ses_scroll")).toHaveLength(pageLimit)
+    expect(setup.data.session.message.more("ses_scroll")).toBe(true)
   } finally {
     setup.dispose()
   }

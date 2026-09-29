@@ -1,7 +1,7 @@
 import type { SessionInboxEnqueued, SessionMessageAssistant, SessionMessageInfo } from "@opencode/client"
 import { createEffect, on, onCleanup, type Accessor } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
-import { messageCacheReleaseLimit } from "@opencode-ai/client/solid"
+import { messageCacheReleaseLimit } from "@opencode/client/solid"
 import { useConfig } from "../../config"
 import { useData } from "../../context/data"
 import { useClient } from "../../context/client"

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Show, createRoot, createSignal } from "solid-js"
-import { messageCacheReleaseLimit } from "@opencode-ai/client/solid"
+import { messageCacheReleaseLimit } from "@opencode/client/solid"
 import { ConfigProvider } from "../../../src/config"
 import { ClientProvider, useClient } from "../../../src/context/client"
 import { DataProvider as DataProviderBase, useData } from "../../../src/context/data"
