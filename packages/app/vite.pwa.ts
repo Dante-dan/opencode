@@ -12,6 +12,7 @@ export function serviceWorker(directory: string) {
     workbox: {
       // Workbox runs after Sentry's upload and cleanup, so do not publish an unuploaded map.
       sourcemap: false,
+      importScripts: ["/notifications.js"],
       globDirectory: directory,
       clientsClaim: false,
       // Keep each open tab on its complete build until all old clients close.

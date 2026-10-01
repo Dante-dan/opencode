@@ -7,6 +7,13 @@ const DEFAULT_SERVER_URL_KEY = "opencode.settings.dat:defaultServerUrl"
 export function createWebPlatform(version: string) {
   const currentServerUrl = getCurrentServerUrl()
   const storedServerUrl = readDefaultServerUrl()
+  const notifications = new Map<string, () => void>()
+  navigator.serviceWorker?.addEventListener("message", (event) => {
+    if (event.data?.type !== "opencode.notification") return
+    const callback = notifications.get(event.data.id)
+    notifications.delete(event.data.id)
+    if (event.data.click) callback?.()
+  })
   const platform: Platform = {
     platform: "web",
     draftStore: createBrowserDraftStore(),
@@ -27,6 +34,28 @@ export function createWebPlatform(version: string) {
           : Notification.permission
       if (permission !== "granted") return
       if (document.visibilityState === "visible" && document.hasFocus()) return
+
+      const registration = await navigator.serviceWorker?.getRegistration()
+      if (registration?.active) {
+        const channel = new MessageChannel()
+        const client = await new Promise<string>((resolve) => {
+          channel.port1.onmessage = (event) => {
+            channel.port1.close()
+            resolve(event.data)
+          }
+          registration.active!.postMessage({ type: "opencode.notification.client" }, [channel.port2])
+        })
+        const id = crypto.randomUUID()
+        if (onClick) notifications.set(id, onClick)
+        await registration
+          .showNotification(title, {
+            body: description ?? "",
+            icon: "https://opencode.ai/favicon-96x96-v3.png",
+            data: { id, client, url: location.href },
+          })
+          .catch(() => notifications.delete(id))
+        return
+      }
 
       const notification = new Notification(title, {
         body: description ?? "",
