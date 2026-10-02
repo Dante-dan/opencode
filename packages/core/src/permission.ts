@@ -128,6 +128,7 @@ const layer = Layer.effect(
     const saved = yield* PermissionSaved.Service
     const hooks = yield* PluginHooks.Service
     const pending = new Map<ID, Pending>()
+    const settling = new Set<ID>()
     let closed = false
 
     const close = Effect.gen(function* () {
@@ -266,60 +267,70 @@ const layer = Layer.effect(
       Effect.uninterruptible(
         Effect.gen(function* () {
           const existing = pending.get(input.requestID)
-          if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
-          yield* bus.publish(Permission.Event.Replied, {
-            sessionID: existing.request.sessionID,
-            requestID: existing.request.id,
-            reply: input.reply,
-          })
+          if (!existing || settling.has(input.requestID))
+            return yield* new NotFoundError({ requestID: input.requestID })
+          settling.add(input.requestID)
+          yield* Effect.gen(function* () {
+            yield* bus.publish(Permission.Event.Replied, {
+              sessionID: existing.request.sessionID,
+              requestID: existing.request.id,
+              reply: input.reply,
+            })
 
-          if (input.reply === "reject") {
-            yield* Deferred.fail(
-              existing.deferred,
-              input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-            )
-            pending.delete(input.requestID)
-            for (const [id, item] of pending) {
-              if (item.request.sessionID !== existing.request.sessionID) continue
-              yield* bus.publish(Permission.Event.Replied, {
-                sessionID: item.request.sessionID,
-                requestID: item.request.id,
-                reply: "reject",
-              })
-              // Feedback applies to the whole batch, so parallel asks don't end the step.
+            if (input.reply === "reject") {
               yield* Deferred.fail(
-                item.deferred,
+                existing.deferred,
                 input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
               )
-              pending.delete(id)
+              pending.delete(input.requestID)
+              for (const [id, item] of pending) {
+                if (item.request.sessionID !== existing.request.sessionID || settling.has(id)) continue
+                settling.add(id)
+                yield* Effect.gen(function* () {
+                  yield* bus.publish(Permission.Event.Replied, {
+                    sessionID: item.request.sessionID,
+                    requestID: item.request.id,
+                    reply: "reject",
+                  })
+                  // Feedback applies to the whole batch, so parallel asks don't end the step.
+                  yield* Deferred.fail(
+                    item.deferred,
+                    input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
+                  )
+                  pending.delete(id)
+                }).pipe(Effect.ensuring(Effect.sync(() => settling.delete(id))))
+              }
+              return
             }
-            return
-          }
 
-          if (input.reply === "always" && existing.request.save?.length) {
-            yield* saved.add({
-              projectID: location.project.id,
-              action: existing.request.action,
-              resources: existing.request.save,
-            })
-          }
-          yield* Deferred.succeed(existing.deferred, undefined)
-          pending.delete(input.requestID)
-          if (input.reply !== "always" || !existing.request.save?.length) return
+            if (input.reply === "always" && existing.request.save?.length) {
+              yield* saved.add({
+                projectID: location.project.id,
+                action: existing.request.action,
+                resources: existing.request.save,
+              })
+            }
+            yield* Deferred.succeed(existing.deferred, undefined)
+            pending.delete(input.requestID)
+            if (input.reply !== "always" || !existing.request.save?.length) return
 
-          for (const [id, item] of pending) {
-            const result = yield* evaluateInput({ ...item.request, agent: item.agent }).pipe(
-              Effect.catchTag("Session.NotFoundError", () => Effect.undefined),
-            )
-            if (result?.effect !== "allow") continue
-            yield* bus.publish(Permission.Event.Replied, {
-              sessionID: item.request.sessionID,
-              requestID: item.request.id,
-              reply: "always",
-            })
-            yield* Deferred.succeed(item.deferred, undefined)
-            pending.delete(id)
-          }
+            for (const [id, item] of pending) {
+              const result = yield* evaluateInput({ ...item.request, agent: item.agent }).pipe(
+                Effect.catchTag("Session.NotFoundError", () => Effect.undefined),
+              )
+              if (result?.effect !== "allow" || settling.has(id) || !pending.has(id)) continue
+              settling.add(id)
+              yield* Effect.gen(function* () {
+                yield* bus.publish(Permission.Event.Replied, {
+                  sessionID: item.request.sessionID,
+                  requestID: item.request.id,
+                  reply: "always",
+                })
+                yield* Deferred.succeed(item.deferred, undefined)
+                pending.delete(id)
+              }).pipe(Effect.ensuring(Effect.sync(() => settling.delete(id))))
+            }
+          }).pipe(Effect.ensuring(Effect.sync(() => settling.delete(input.requestID))))
         }),
       ),
     )

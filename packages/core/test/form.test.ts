@@ -336,6 +336,36 @@ describe("Form", () => {
     }),
   )
 
+  for (const action of ["reply", "cancel"] as const) {
+    it.effect(`rejects a second settlement during ${action} publication`, () =>
+      Effect.gen(function* () {
+        const service = yield* Form.Service
+        const bus = yield* Bus.Service
+        const form = yield* service.create(input)
+        const results: Array<Exit.Exit<void, Form.AlreadySettledError | Form.NotFoundError>> = []
+        const unsubscribe = yield* bus.listen((event) =>
+          event.type === (action === "reply" ? Form.Event.Replied.type : Form.Event.Cancelled.type)
+            ? service.cancel(form.id).pipe(
+                Effect.exit,
+                Effect.tap((result) => Effect.sync(() => results.push(result))),
+                Effect.asVoid,
+              )
+            : Effect.void,
+        )
+        yield* Effect.addFinalizer(() => unsubscribe)
+
+        if (action === "reply") yield* service.reply({ id: form.id, answer: { name: "Ava" } })
+        else yield* service.cancel(form.id)
+
+        expect(results).toHaveLength(1)
+        expect(Exit.isFailure(results[0]!)).toBe(true)
+        expect(yield* service.state(form.id)).toEqual(
+          action === "reply" ? { status: "answered", answer: { name: "Ava" } } : { status: "cancelled" },
+        )
+      }),
+    )
+  }
+
   it.effect("keeps forms pending when reply event publication fails", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service
