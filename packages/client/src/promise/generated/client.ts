@@ -588,7 +588,7 @@ export function make(options: ClientOptions) {
               permissions: input?.["permissions"],
             },
             successStatus: 200,
-            declaredStatuses: [400, 401, 404],
+            declaredStatuses: [400, 401, 404, 500],
             empty: false,
           },
           requestOptions,
