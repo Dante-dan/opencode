@@ -8,6 +8,8 @@ import { Deferred, Effect, Fiber, Layer } from "effect"
 import { Reactivity } from "effect/unstable/reactivity"
 import { SqlClient, Statement } from "effect/unstable/sql"
 import { sql } from "drizzle-orm"
+import { sqliteLayer } from "@opencode/core/database/sqlite.bun"
+import { SqlError } from "effect/unstable/sql/SqlError"
 import { DatabaseMigration } from "@opencode/core/database/migration"
 import { migrations } from "@opencode/core/database/migration.gen"
 import workspaceNameMigration from "@opencode/core/database/migration/20260410174513_workspace-name"
@@ -62,6 +64,38 @@ const parkedClient = (arrived: Deferred.Deferred<void>, gate: Deferred.Deferred<
   ).pipe(Layer.provide(SqliteClient.layer({ filename: ":memory:", disableWAL: true })), Layer.provide(Reactivity.layer))
 
 describe("DatabaseMigration", () => {
+  test("allows newer migration journals while distinguishing retired ids", async () => {
+    expect(DatabaseMigration.newer([migrations[0]!.id, "20260101000000_retired", "99991231000000_newer"])).toEqual([
+      "99991231000000_newer",
+    ])
+    await run(
+      Effect.gen(function* () {
+        const db = yield* makeDb
+        yield* DatabaseMigration.apply(db)
+        yield* db.run(sql`INSERT INTO migration (id, time_completed) VALUES ('99991231000000_newer', 1)`)
+        yield* DatabaseMigration.apply(db)
+        expect(yield* db.get(sql`SELECT count(*) AS count FROM migration WHERE id = '99991231000000_newer'`)).toEqual({
+          count: 1,
+        })
+      }),
+    )
+  })
+
+  test("reports statement preparation errors as typed SQL failures", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const client = yield* SqlClient.SqlClient
+        const error = yield* client`SELECT missing_column FROM missing_table`.pipe(Effect.flip)
+        expect(error).toBeInstanceOf(SqlError)
+        const connection = yield* client.reserve
+        const valuesError = yield* connection
+          .executeValues("SELECT missing_column FROM missing_table", [])
+          .pipe(Effect.flip)
+        expect(valuesError).toBeInstanceOf(SqlError)
+      }).pipe(Effect.provide(sqliteLayer({ filename: ":memory:" })), Effect.scoped),
+    )
+  })
+
   test("defaults missing workspace names while preserving legacy workspace data", async () => {
     await run(
       Effect.gen(function* () {

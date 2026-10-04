@@ -17,6 +17,14 @@ export type Migration = {
   up: (tx: Transaction) => Effect.Effect<void, unknown, Global.Service>
 }
 
+export function newer(ids: Iterable<string>) {
+  const known = new Set(migrations.map((migration) => migration.id))
+  const latest = migrations.reduce((max, migration) => (migration.id > max ? migration.id : max), "")
+  return Array.from(ids)
+    .filter((id) => !known.has(id) && id > latest)
+    .sort()
+}
+
 // Not serialized here: the Database layer holds a lock scoped to the database
 // it is bootstrapping, since two instances over one file must not race.
 export function apply(db: Database) {
@@ -26,6 +34,15 @@ export function apply(db: Database) {
     const tables = yield* db.all<{ name: string }>(
       sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND substr(name, 1, 1) <> '_'`,
     )
+    if (tables.some((table) => table.name === "migration")) {
+      const unknown = newer(
+        (yield* db.all<{ id: string }>(sql`SELECT id FROM ${sql.identifier("migration")}`)).map((row) => row.id),
+      )
+      if (unknown.length > 0)
+        yield* Effect.logWarning(
+          `Database was migrated by a newer version of OpenCode (${unknown.at(-1)}). Update this installation if queries fail.`,
+        )
+    }
     if (tables.some((table) => table.name === "session" || table.name === "session_v2"))
       return yield* applyOnly(db, migrations)
     if (tables.length > 0) return yield* Effect.die(new Error("Database is not empty and has no session table"))

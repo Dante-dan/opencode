@@ -21,6 +21,7 @@ import {
   ServiceUnavailableError,
   SessionBusyError,
   SkillNotFoundError,
+  UnknownError,
 } from "@opencode/protocol/errors"
 import { AbsolutePath } from "@opencode/core/schema"
 import { locationErrors } from "../location"
@@ -138,7 +139,19 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                   ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
                   : { parentID: ctx.payload.parentID }),
               })
-              .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchDefect((defect) => {
+                  const ref = `err_${crypto.randomUUID().slice(0, 8)}`
+                  return Effect.logError("failed to create session", { ref, defect }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new UnknownError({ message: "Failed to create session. Check server logs for details.", ref }),
+                      ),
+                    ),
+                  )
+                }),
+              ),
           }
         }),
       )
