@@ -470,7 +470,7 @@ export const page = Effect.fn("MessageV2.page")(function* (input: {
   }
 })
 
-export function stream(sessionID: SessionID) {
+export function stream(sessionID: SessionID, stop?: (message: WithParts) => boolean) {
   const size = 50
   return Effect.gen(function* () {
     const result = [] as WithParts[]
@@ -484,7 +484,9 @@ export function stream(sessionID: SessionID) {
       if (next.items.length === 0) break
       for (let i = next.items.length - 1; i >= 0; i--) {
         const item = next.items[i]
-        if (item) result.push(item)
+        if (!item) continue
+        result.push(item)
+        if (stop?.(item)) return result
       }
       if (!next.more || !next.cursor) break
       before = next.cursor
@@ -522,28 +524,30 @@ export const get = Effect.fn("MessageV2.get")(function* (input: { sessionID: Ses
   }
 })
 
-export function filterCompacted(msgs: Iterable<WithParts>) {
-  const result = [] as WithParts[]
+function compactionBoundary() {
   const completed = new Set<string>()
   let retain: MessageID | undefined
-  for (const msg of msgs) {
-    result.push(msg)
-    if (retain) {
-      if (msg.info.id === retain) break
-      continue
-    }
+  return (msg: WithParts) => {
+    if (retain) return msg.info.id === retain
     if (msg.info.role === "user" && completed.has(msg.info.id)) {
       const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
-      if (!part) continue
-      if (!part.tail_start_id) break
+      if (!part) return false
+      if (!part.tail_start_id) return true
       retain = part.tail_start_id
-      if (msg.info.id === retain) break
-      continue
+      return msg.info.id === retain
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id) && msg.parts.some((part) => part.type === "compaction"))
-      break
     if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
       completed.add(msg.info.parentID)
+    return false
+  }
+}
+
+export function filterCompacted(msgs: Iterable<WithParts>) {
+  const result = [] as WithParts[]
+  const stop = compactionBoundary()
+  for (const msg of msgs) {
+    result.push(msg)
+    if (stop(msg)) break
   }
   result.reverse()
   const compactionIndex = result.findLastIndex(
@@ -576,7 +580,8 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
 }
 
 export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
-  return filterCompacted(yield* stream(sessionID))
+  // Stop fetching older pages once the completed compaction and its retained tail are loaded.
+  return filterCompacted(yield* stream(sessionID, compactionBoundary()))
 })
 
 // filterCompacted reorders messages for model consumption

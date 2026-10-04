@@ -3,6 +3,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Effect, Option } from "effect"
+import { Database } from "@opencode-ai/core/database/database"
 import { Session as SessionNs } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
@@ -596,13 +597,76 @@ describe("Session.findMessage", () => {
   )
 })
 
+describe("MessageV2.filterCompactedEffect", () => {
+  for (const tail of [false, true]) {
+    it.instance(`stops reading old pages after completed compaction (retained tail: ${tail})`, () =>
+      withSession(({ sessionID }) =>
+        Effect.gen(function* () {
+          yield* fill(sessionID, 150, (i: number) => Date.now() - 2000 + i)
+          const retained = tail ? yield* fill(sessionID, 60, (i: number) => Date.now() - 1000 + i) : []
+          const boundary = yield* addUser(sessionID)
+          yield* addCompactionPart(sessionID, boundary, retained[0])
+          const summary = yield* addAssistant(sessionID, boundary, { summary: true, finish: "end_turn" })
+          const next = yield* addUser(sessionID, "continue")
+          const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+          const database = yield* Database.Service
+          const reads = { count: 0 }
+          // Count real SELECT construction; all queries still use the fixture's database.
+          const db = new Proxy(database.db, {
+            get(target, key, receiver) {
+              if (key !== "select") return Reflect.get(target, key, receiver)
+              return () => {
+                reads.count++
+                return target.select()
+              }
+            },
+          })
+          const result = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+            Effect.provideService(Database.Service, { db }),
+          )
+          expect(result).toEqual(expected)
+          expect(result.map((item) => item.info.id)).toEqual([boundary, summary, ...retained, next])
+          // One message SELECT and one part SELECT per 50-message page.
+          expect(reads.count).toBe(tail ? 4 : 2)
+        }),
+      ),
+    )
+  }
+
+  for (const state of ["unfinished", "error", "unrelated"]) {
+    it.instance(`keeps older pages when summary is ${state}`, () =>
+      withSession(({ sessionID }) =>
+        Effect.gen(function* () {
+          yield* fill(sessionID, 60, (i: number) => Date.now() - 1000 + i)
+          const boundary = yield* addUser(sessionID)
+          yield* addCompactionPart(sessionID, boundary)
+          const parent = state === "unrelated" ? yield* addUser(sessionID) : boundary
+          yield* addAssistant(sessionID, parent, {
+            summary: true,
+            finish: state === "unfinished" ? undefined : "end_turn",
+            error:
+              state === "error"
+                ? new SessionV1.APIError({ message: "failed", isRetryable: true }).toObject()
+                : undefined,
+          })
+          const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+          expect(yield* MessageV2.filterCompactedEffect(sessionID)).toEqual(expected)
+          expect(expected.length).toBe(state === "unrelated" ? 63 : 62)
+        }),
+      ),
+    )
+  }
+})
+
 describe("MessageV2.filterCompacted", () => {
   it.instance("returns all messages when no compaction", () =>
     withSession(({ sessionID }) =>
       Effect.gen(function* () {
         const ids = yield* fill(sessionID, 5)
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
         expect(result).toHaveLength(5)
         // reversed from newest-first to chronological
         expect(result.map((item) => item.info.id)).toEqual(ids)
@@ -636,7 +700,9 @@ describe("MessageV2.filterCompacted", () => {
           text: "new response",
         })
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
         // Includes compaction boundary: u1, a1, u2, a2
         expect(result[0].info.id).toBe(u1)
         expect(result.length).toBe(4)
@@ -658,7 +724,9 @@ describe("MessageV2.filterCompacted", () => {
         yield* addCompactionPart(sessionID, u1)
         yield* addUser(sessionID, "world")
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
         expect(result).toHaveLength(2)
       }),
     ),
@@ -677,7 +745,9 @@ describe("MessageV2.filterCompacted", () => {
         yield* addAssistant(sessionID, u1, { summary: true, finish: "end_turn", error })
         yield* addUser(sessionID, "retry")
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
         // Error assistant doesn't add to completed, so compaction boundary never triggers
         expect(result).toHaveLength(3)
       }),
@@ -694,7 +764,9 @@ describe("MessageV2.filterCompacted", () => {
         yield* addAssistant(sessionID, u1, { summary: true })
         yield* addUser(sessionID, "next")
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
         expect(result).toHaveLength(3)
       }),
     ),
@@ -744,7 +816,9 @@ describe("MessageV2.filterCompacted", () => {
           text: "third reply",
         })
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
 
         expect(result.map((item) => item.info.id)).toEqual([c1, s1, u2, a2, u3, a3])
       }),
@@ -867,7 +941,9 @@ describe("MessageV2.filterCompacted", () => {
           text: "third reply",
         })
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
 
         expect(result.map((item) => item.info.id)).toEqual([c1, s1, a3, u3, a4])
       }),
@@ -939,7 +1015,9 @@ describe("MessageV2.filterCompacted", () => {
           text: "fourth reply",
         })
 
-        const result = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const expected = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        const result = yield* MessageV2.filterCompactedEffect(sessionID)
+        expect(result).toEqual(expected)
 
         expect(result.map((item) => item.info.id)).toEqual([c2, s2, u3, a3, u4, a4])
       }),
