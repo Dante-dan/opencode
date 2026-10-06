@@ -126,6 +126,46 @@ test("spells Cloudflare AI Gateway variants for their upstream routes", () => {
   ])
 })
 
+test("spells Vercel AI Gateway variants for their selected routes", () => {
+  const pkg = "@opencode/ai/providers/vercel-ai-gateway"
+  expect(resolve(model(pkg, "openai/gpt-5.4"), [{ type: "effort", values: ["low", "xhigh"] }])).toEqual([
+    {
+      id: "low",
+      settings: { reasoningEffort: "low", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+    },
+    {
+      id: "xhigh",
+      settings: { reasoningEffort: "xhigh", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+    },
+  ])
+  expect(resolve(model(pkg, "spacexai/grok-4.7"), [{ type: "effort" }]).map((item) => item.id)).toEqual([
+    "low",
+    "medium",
+    "high",
+  ])
+  expect(
+    resolve(model(pkg, "anthropic/claude-sonnet-4.6"), [{ type: "effort", values: ["none", "low", "high"] }]),
+  ).toEqual([
+    { id: "none", settings: { thinking: { type: "disabled" } } },
+    { id: "low", settings: { effort: "low", thinking: { type: "adaptive", display: "summarized" } } },
+    { id: "high", settings: { effort: "high", thinking: { type: "adaptive", display: "summarized" } } },
+  ])
+  expect(resolve(model(pkg, "meta/muse-spark-1.3"), [{ type: "effort", values: ["low", "high"] }])).toEqual([
+    { id: "low", settings: { reasoningEffort: "low" } },
+    { id: "high", settings: { reasoningEffort: "high" } },
+  ])
+  expect(
+    resolve(model(pkg, "alibaba/qwen-3-32b", 38_912), [
+      { type: "toggle" },
+      { type: "budget_tokens", min: 1, max: 38_912 },
+    ]),
+  ).toEqual([
+    { id: "none", settings: { thinking: { type: "disabled" } } },
+    { id: "high", settings: { thinking: { type: "enabled", budgetTokens: 19_456 } } },
+    { id: "max", settings: { thinking: { type: "enabled", budgetTokens: 38_911 } } },
+  ])
+})
+
 test("spells xAI Responses variants with catalog effort levels", () => {
   const supports: Variant.Support[] = [{ type: "effort", values: ["low", "medium", "high", "xhigh"] }]
   expect(resolve(model("@opencode/ai/providers/xai", "grok-4.6"), supports)).toEqual(
@@ -134,16 +174,21 @@ test("spells xAI Responses variants with catalog effort levels", () => {
       settings: { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
     })),
   )
-  expect(resolve(model("@opencode/ai/providers/xai", "grok-4.3"), [{ type: "effort", values: ["none", "low"] }])).toEqual([
+  expect(
+    resolve(model("@opencode/ai/providers/xai", "grok-4.3"), [{ type: "effort", values: ["none", "low"] }]),
+  ).toEqual([
     {
       id: "none",
       settings: { reasoningEffort: "none", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
     },
-    { id: "low", settings: { reasoningEffort: "low", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] } },
+    {
+      id: "low",
+      settings: { reasoningEffort: "low", reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+    },
   ])
-  expect(resolve(model("@opencode/ai/providers/xai", "grok-4.6"), [{ type: "effort" }]).map((item) => item.id)).toEqual([
-    "low", "medium", "high",
-  ])
+  expect(resolve(model("@opencode/ai/providers/xai", "grok-4.6"), [{ type: "effort" }]).map((item) => item.id)).toEqual(
+    ["low", "medium", "high"],
+  )
 })
 
 test("spells Chat Completions variants for direct providers", () => {
@@ -292,6 +337,27 @@ test("spells Workers AI thinking controls through the chat template", () => {
     { id: "low", settings: { reasoningEffort: "low" } },
     { id: "medium", settings: { reasoningEffort: "medium" } },
     { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
+  ])
+})
+
+test("spells Cohere native thinking and compatibility effort variants", () => {
+  expect(
+    resolve(model("@opencode/ai/providers/cohere", "command-a-reasoning-08-2025", 32_000), [
+      { type: "toggle" },
+      { type: "budget_tokens", min: 1 },
+    ]),
+  ).toEqual([
+    { id: "none", settings: { thinking: { type: "disabled" } } },
+    { id: "high", settings: { thinking: { type: "enabled", tokenBudget: 16_000 } } },
+    { id: "max", settings: { thinking: { type: "enabled", tokenBudget: 31_999 } } },
+  ])
+  expect(
+    resolve(model("@opencode/ai/providers/cohere/chat", "north-mini-code-1-0"), [
+      { type: "effort", values: ["none", "high"] },
+    ]),
+  ).toEqual([
+    { id: "none", settings: { reasoningEffort: "none" } },
+    { id: "high", settings: { reasoningEffort: "high" } },
   ])
 })
 
