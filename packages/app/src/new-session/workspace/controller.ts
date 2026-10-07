@@ -27,7 +27,9 @@ export function resolveNewSessionWorktree(input: {
   if (!input.enabled) return "main"
 
   if (input.selected) return input.selected
+
   const directory = input.directory
+
   if (
     directory &&
     input.projectWorktree &&
@@ -78,6 +80,7 @@ export function createNewSessionWorkspaceController(input: {
 
   const [state, setState] = createStore({
     search: "",
+    // SAFETY: No destination is selected initially; later selections carry both project and directory.
     existing: undefined as { projectID: string; directory: string } | undefined,
   })
 

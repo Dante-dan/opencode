@@ -45,6 +45,7 @@ describe("new session workspace selection", () => {
       projectWorktree: "C:\\repos\\app",
       workspaces: ["C:\\repos\\app-wt1"],
     }
+
     expect(resolveNewSessionWorktree({ ...input, fallback: "main" })).toBe(input.directory)
     expect(resolveNewSessionWorktree({ ...input, fallback: "create" })).toBe(input.directory)
     expect(resolveNewSessionWorktree({ ...input, selected: "main" })).toBe("main")
