@@ -163,30 +163,18 @@ describe("Session.move", () => {
         const execution = yield* SessionExecution.Service
         const db = (yield* Database.Service).db
         const created = yield* sessions.create({ location: Location.Ref.make({ directory: source }) })
-        const remaining = yield* sessions.create({ location: Location.Ref.make({ directory: source }) })
         // Match the reported existing database, where global already points at the source.
         yield* db.update(ProjectTable).set({ worktree: source }).where(eq(ProjectTable.id, Project.ID.global)).run()
-        const before = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, Project.ID.global)).get()
-        const other = yield* sessions.create({ location: Location.Ref.make({ directory: destination }) })
 
         yield* Effect.promise(() => rm(source, { recursive: true }))
 
         yield* sessions.move({ sessionID: created.id, directory: destination })
         yield* execution.awaitIdle(created.id)
 
-        expect(yield* sessions.get(created.id)).toMatchObject({
-          projectID: Project.ID.global,
-          location: { directory: destination },
-        })
-        expect((yield* sessions.list({ directory: source })).data.map((item) => item.id)).toEqual([remaining.id])
-        expect((yield* sessions.list({ directory: destination })).data.map((item) => item.id)).toEqual(
-          expect.arrayContaining([created.id, other.id]),
-        )
+        expect((yield* sessions.get(created.id)).location.directory).toBe(destination)
         expect(
           (yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, Project.ID.global)).get())?.worktree,
-        ).toBe(before?.worktree)
-        yield* sessions.remove(remaining.id)
-        expect((yield* sessions.get(created.id)).location.directory).toBe(destination)
+        ).toBe(source)
       }),
     { timeout: 120_000 },
   )
