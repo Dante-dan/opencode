@@ -64,8 +64,17 @@ export const Plugin = define({
               id: provider.id,
               integrationID: provider.integrationID,
             })
-          // Catalog overrides must retain their credential-based availability.
-          if (!current?.provider.integrationID || changed) provider.activation = "enabled"
+          // Request overlays alone must not bypass a catalog provider's credential check.
+          if (
+            !current?.provider.integrationID ||
+            changed ||
+            item.package !== undefined ||
+            item.models !== undefined ||
+            [item.settings?.apiKey, item.settings?.authToken, item.settings?.accessToken].some(
+              (value) => typeof value === "string" && value !== "",
+            )
+          )
+            provider.activation = "enabled"
           if (item.canonical !== undefined) provider.canonical = item.canonical
           if (item.name !== undefined) provider.name = item.name
           if (item.package !== undefined) provider.package = item.package

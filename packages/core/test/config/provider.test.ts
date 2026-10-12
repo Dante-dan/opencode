@@ -190,6 +190,30 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  for (const override of [{ settings: { apiKey: "fixture-key" } }, { models: { chat: {} } }]) {
+    it.effect(`keeps explicit catalog provider ${"settings" in override ? "credentials" : "models"} available`, () =>
+      Effect.gen(function* () {
+        const providers = yield* Provider.Service
+        const models = yield* Model.Service
+        const integrations = yield* Integration.Service
+        yield* integrations.transform((editor) => {
+          editor.method.update({ integrationID: Integration.ID.make("anthropic"), method: { type: "key" } })
+        })
+        yield* providers.transform((editor) => {
+          editor.update(Provider.ID.anthropic, (provider) => {
+            provider.activation = "auto"
+            provider.integrationID = Integration.ID.make("anthropic")
+          })
+          editor.models.update(Provider.ID.anthropic, Model.ID.make("chat"), () => {})
+        })
+        yield* addPlugin([new Document({ type: "document", info: decode({ providers: { anthropic: override } }) })])
+
+        expect((yield* providers.get(Provider.ID.anthropic))?.activation).toBe("enabled")
+        expect((yield* models.default())?.providerID).toBe(Provider.ID.anthropic)
+      }),
+    )
+  }
+
   it.effect("adds key auth for custom providers without env credentials", () =>
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
