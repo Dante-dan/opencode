@@ -152,7 +152,7 @@ describe("ConfigProviderPlugin.Plugin", () => {
     )
   }
 
-  it.effect("keeps settings-only providers unavailable without credentials and preserves the default model", () =>
+  it.effect("keeps settings-only providers selectable without changing the implicit default", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
       const models = yield* Model.Service
@@ -183,9 +183,9 @@ describe("ConfigProviderPlugin.Plugin", () => {
         }),
       ])
 
-      expect((yield* providers.get(Provider.ID.anthropic))?.activation).toBe("auto")
+      expect((yield* providers.get(Provider.ID.anthropic))?.activation).toBe("enabled")
       expect((yield* providers.get(Provider.ID.anthropic))?.settings?.baseURL).toBe("https://proxy.example/v1")
-      expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(Provider.ID.anthropic)
+      expect((yield* providers.available()).map((provider) => provider.id)).toContain(Provider.ID.anthropic)
       expect((yield* models.default())?.providerID).toBe(clean.providerID)
     }),
   )
@@ -209,7 +209,43 @@ describe("ConfigProviderPlugin.Plugin", () => {
         yield* addPlugin([new Document({ type: "document", info: decode({ providers: { anthropic: override } }) })])
 
         expect((yield* providers.get(Provider.ID.anthropic))?.activation).toBe("enabled")
-        expect((yield* models.default())?.providerID).toBe(Provider.ID.anthropic)
+        expect((yield* models.default())?.providerID).toBe("settings" in override ? Provider.ID.anthropic : undefined)
+      }),
+    )
+  }
+
+  for (const headers of [{ "x-api-key": "gateway-key" }, {}]) {
+    it.effect(`preserves explicit ${"x-api-key" in headers ? "header-auth" : "keyless"} gateway selection`, () =>
+      Effect.gen(function* () {
+        const providers = yield* Provider.Service
+        const models = yield* Model.Service
+        const integrations = yield* Integration.Service
+        const modelID = Model.ID.make("chat")
+        yield* integrations.transform((editor) => {
+          editor.method.update({ integrationID: Integration.ID.make("xai"), method: { type: "key" } })
+        })
+        yield* providers.transform((editor) => {
+          editor.update(Provider.ID.make("xai"), (provider) => {
+            provider.activation = "auto"
+            provider.integrationID = Integration.ID.make("xai")
+          })
+          editor.models.update(Provider.ID.make("xai"), modelID, () => {})
+        })
+        yield* addPlugin([
+          new Document({
+            type: "document",
+            info: decode({
+              model: "xai/chat",
+              providers: { xai: { settings: { baseURL: "http://localhost:1234/v1" }, headers } },
+            }),
+          }),
+        ])
+        expect((yield* providers.available()).map((provider) => provider.id)).toContain(Provider.ID.make("xai"))
+        expect(yield* models.get(Provider.ID.make("xai"), modelID)).toMatchObject({
+          settings: { baseURL: "http://localhost:1234/v1" },
+          headers,
+        })
+        expect((yield* models.default())?.providerID).toBe(Provider.ID.make("xai"))
       }),
     )
   }
