@@ -64,7 +64,8 @@ export const Plugin = define({
               id: provider.id,
               integrationID: provider.integrationID,
             })
-          provider.activation = "enabled"
+          // Catalog overrides must retain their credential-based availability.
+          if (!current?.provider.integrationID || changed) provider.activation = "enabled"
           if (item.canonical !== undefined) provider.canonical = item.canonical
           if (item.name !== undefined) provider.name = item.name
           if (item.package !== undefined) provider.package = item.package

@@ -152,6 +152,44 @@ describe("ConfigProviderPlugin.Plugin", () => {
     )
   }
 
+  it.effect("keeps settings-only providers unavailable without credentials and preserves the default model", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const integrations = yield* Integration.Service
+      const fallback = Provider.ID.make("fallback")
+      const model = Model.ID.make("chat")
+      yield* integrations.transform((editor) => {
+        editor.method.update({ integrationID: Integration.ID.make("anthropic"), method: { type: "key" } })
+      })
+      yield* providers.transform((editor) => {
+        editor.update(Provider.ID.anthropic, (provider) => {
+          provider.activation = "auto"
+          provider.integrationID = Integration.ID.make("anthropic")
+        })
+        editor.models.update(Provider.ID.anthropic, model, () => {})
+        editor.update(fallback, (provider) => {
+          provider.activation = "enabled"
+        })
+        editor.models.update(fallback, model, () => {})
+      })
+      const clean = required(yield* models.default())
+      expect(clean.providerID).toBe(fallback)
+
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({ providers: { anthropic: { settings: { baseURL: "https://proxy.example/v1" } } } }),
+        }),
+      ])
+
+      expect((yield* providers.get(Provider.ID.anthropic))?.activation).toBe("auto")
+      expect((yield* providers.get(Provider.ID.anthropic))?.settings?.baseURL).toBe("https://proxy.example/v1")
+      expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(Provider.ID.anthropic)
+      expect((yield* models.default())?.providerID).toBe(clean.providerID)
+    }),
+  )
+
   it.effect("adds key auth for custom providers without env credentials", () =>
     Effect.gen(function* () {
       const integrations = yield* Integration.Service
