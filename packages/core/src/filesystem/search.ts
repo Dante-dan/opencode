@@ -72,26 +72,38 @@ export const ripgrepLayer = Layer.effect(
       const next = emptyIndex()
       const previous = index
       if (!initialized) index = next
-      yield* ripgrep.find({
-        cwd: location.directory,
-        pattern: "*",
-        limit: location.vcs && !home ? Number.MAX_SAFE_INTEGER : 100_000,
-        exclude: home ? [...Protected.names()].map((name) => `${name}/**`) : undefined,
-        onTruncated: () =>
-          Effect.sync(() => {
-            next.truncated = true
-          }),
-        onEntry: (entry) =>
-          Effect.sync(() => {
-            next.files.set(entry.path, previous.files.get(entry.path) ?? fuzzysort.prepare(entry.path))
-            const parts = entry.path.split("/")
-            parts.slice(0, -1).forEach((_, offset) => {
-              const directory = parts.slice(0, offset + 1).join("/") + path.sep
-              if (!next.directories.has(directory))
-                next.directories.set(directory, previous.directories.get(directory) ?? fuzzysort.prepare(directory))
-            })
-          }),
-      })
+      const limited = !location.vcs || home
+      // Keep source trees searchable before generated files exhaust the bounded index.
+      for (const priority of limited ? [true, false] : [false]) {
+        if (next.truncated) break
+        yield* ripgrep.find({
+          cwd: location.directory,
+          pattern: "*",
+          // Explicit paths preserve rg ignore rules, unlike a positive source glob.
+          paths: priority ? ["./src"] : undefined,
+          limit: limited ? 100_000 - next.files.size : Number.MAX_SAFE_INTEGER,
+          // A capped parallel walk selects a different subset on each refresh.
+          sort: limited,
+          exclude: [
+            ...(home ? [...Protected.names()].map((name) => `${name}/**`) : []),
+            ...(limited && !priority ? ["src/**"] : []),
+          ],
+          onTruncated: () =>
+            Effect.sync(() => {
+              next.truncated = true
+            }),
+          onEntry: (entry) =>
+            Effect.sync(() => {
+              next.files.set(entry.path, previous.files.get(entry.path) ?? fuzzysort.prepare(entry.path))
+              const parts = entry.path.split("/")
+              parts.slice(0, -1).forEach((_, offset) => {
+                const directory = parts.slice(0, offset + 1).join("/") + path.sep
+                if (!next.directories.has(directory))
+                  next.directories.set(directory, previous.directories.get(directory) ?? fuzzysort.prepare(directory))
+              })
+            }),
+        })
+      }
       index = next
       initialized = true
     }).pipe(Effect.orDie)

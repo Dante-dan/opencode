@@ -59,6 +59,37 @@ describe("Ripgrep", () => {
     ),
   )
 
+  it.live("keeps a sorted capped find stable across repeated scans", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      yield* Effect.promise(() =>
+        Promise.all(["z/last.ts", "a/first.ts", "m/middle.ts"].map((file) => Bun.write(path.join(tmp.path, file), ""))),
+      )
+      const ripgrep = yield* Ripgrep.Service
+      for (let scan = 0; scan < 2; scan++) {
+        let truncated = false
+        const observed: string[] = []
+        const files = yield* ripgrep.find({
+          cwd: tmp.path,
+          pattern: "*",
+          limit: 2,
+          sort: true,
+          onEntry: (entry) => Effect.sync(() => observed.push(entry.path)),
+          onTruncated: () =>
+            Effect.sync(() => {
+              truncated = true
+            }),
+        })
+        expect(files.map((entry) => entry.path)).toEqual([
+          RelativePath.make("a/first.ts"),
+          RelativePath.make("m/middle.ts"),
+        ])
+        expect(observed).toEqual(files.map((entry) => entry.path))
+        expect(truncated).toBe(true)
+      }
+    }),
+  )
+
   it.live("greps files with include filtering", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),

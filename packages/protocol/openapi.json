@@ -8972,6 +8972,10 @@
                       "items": {
                         "$ref": "#/components/schemas/FileSystem.Entry"
                       }
+                    },
+                    "indexTruncated": {
+                      "type": "boolean",
+                      "description": "Whether the location index exceeded its scan limit, independently of the requested result limit. Absent on older servers."
                     }
                   },
                   "required": ["location", "data"],
@@ -14190,6 +14194,9 @@
         "properties": {
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/Provider.Encoding"
           }
         },
         "allOf": [
@@ -14369,6 +14376,9 @@
           },
           "transport": {
             "$ref": "#/components/schemas/Provider.Transport"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/Provider.Encoding"
           }
         },
         "allOf": [
@@ -16838,6 +16848,9 @@
         "properties": {
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/Provider.Encoding"
           }
         },
         "allOf": [
@@ -17755,6 +17768,10 @@
         },
         "additionalProperties": false
       },
+      "Provider.Encoding": {
+        "type": "string",
+        "enum": ["zstd", "gzip", "none"]
+      },
       "Provider.ID": {
         "type": "string"
       },
@@ -17859,6 +17876,9 @@
           },
           "transport": {
             "$ref": "#/components/schemas/Provider.Transport"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/Provider.Encoding"
           }
         },
         "allOf": [

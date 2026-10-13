@@ -59,6 +59,8 @@ export interface FindInput {
   readonly signal?: AbortSignal
   readonly onEntry?: (entry: Entry) => Effect.Effect<void>
   readonly onTruncated?: () => Effect.Effect<void>
+  readonly sort?: boolean
+  readonly paths?: readonly string[]
 }
 
 export interface GlobInput {
@@ -203,12 +205,14 @@ const layer = Layer.effect(
           args: [
             "--no-config",
             "--files",
+            ...(input.sort ? ["--sort=path"] : []),
             ...(input.hidden ? ["--hidden"] : []),
             ...(input.follow ? ["--follow"] : []),
             ...(input.pattern === "*" ? [] : [`--glob=${input.pattern}`]),
             ...(input.exclude ?? []).map((pattern) => `--glob=!${pattern}`),
             "--glob=!**/.git/**",
-            ".",
+            "--",
+            ...(input.paths ?? ["."]),
           ],
           parse: (line) => {
             const relative = normalizePath(line)
