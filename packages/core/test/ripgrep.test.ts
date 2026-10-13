@@ -104,7 +104,7 @@ describe("Ripgrep", () => {
     ),
   )
 
-  it.live("never includes git metadata", () =>
+  it.live("never includes git metadata and reports only real overflow", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
       (tmp) =>
@@ -119,14 +119,33 @@ describe("Ripgrep", () => {
           expect(files.map((item) => item.path)).toContain(RelativePath.make(".opencode/config"))
           expect(files.map((item) => item.path)).not.toContain(RelativePath.make(".git/config"))
 
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "extra.txt"), ""))
+          let truncated = false
           const observed: string[] = []
           const limited = yield* ripgrep.find({
             cwd: tmp.path,
             pattern: "**/*",
             limit: 1,
             onEntry: (entry) => Effect.sync(() => observed.push(entry.path)),
+            onTruncated: () =>
+              Effect.sync(() => {
+                truncated = true
+              }),
           })
           expect(observed).toEqual(limited.map((item) => item.path))
+          expect(truncated).toBe(true)
+          truncated = false
+          const exact = yield* ripgrep.find({
+            cwd: tmp.path,
+            pattern: "**/*",
+            limit: 2,
+            onTruncated: () =>
+              Effect.sync(() => {
+                truncated = true
+              }),
+          })
+          expect(exact).toHaveLength(2)
+          expect(truncated).toBe(false)
 
           const matches = yield* ripgrep.grep({ cwd: tmp.path, pattern: "needle", include: "config", limit: 10 })
           expect(matches.map((item) => item.entry.path)).toContain(RelativePath.make(".opencode/config"))

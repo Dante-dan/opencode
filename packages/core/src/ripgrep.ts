@@ -58,6 +58,7 @@ export interface FindInput {
   readonly follow?: boolean
   readonly signal?: AbortSignal
   readonly onEntry?: (entry: Entry) => Effect.Effect<void>
+  readonly onTruncated?: () => Effect.Effect<void>
 }
 
 export interface GlobInput {
@@ -113,6 +114,7 @@ const layer = Layer.effect(
       readonly parse: (line: string) => Effect.Effect<A | undefined, Error>
       readonly pattern?: string
       readonly onItem?: (item: A) => Effect.Effect<void>
+      readonly onTruncated?: () => Effect.Effect<void>
     }) => {
       const program = Effect.scoped(
         Effect.gen(function* () {
@@ -138,7 +140,10 @@ const layer = Layer.effect(
             Stream.runCollect,
           )
           const truncated = rows.length > input.limit
-          if (truncated) return rows.slice(0, input.limit)
+          if (truncated) {
+            if (input.onTruncated) yield* input.onTruncated()
+            return rows.slice(0, input.limit)
+          }
 
           const code = yield* handle.exitCode
           const stderr = yield* Fiber.join(stderrFiber)
@@ -215,6 +220,7 @@ const layer = Layer.effect(
             )
           },
           onItem: input.onEntry,
+          onTruncated: input.onTruncated,
         }).pipe(Effect.catchTag("Ripgrep.InvalidPatternError", (cause) => Effect.fail(failure(cause.message, cause)))),
       grep: (input) =>
         run<RawMatchData>({

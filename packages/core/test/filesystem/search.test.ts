@@ -159,6 +159,7 @@ describe("FileSystemSearch", () => {
                     type: "file",
                   })
                   if (input.onEntry) yield* input.onEntry(entry)
+                  if (scans === 1 && input.onTruncated) yield* input.onTruncated()
                   return [entry]
                 }),
               glob: () => Effect.succeed([]),
@@ -173,6 +174,7 @@ describe("FileSystemSearch", () => {
         yield* search.find({ query: "old", type: "file" })
         expect((yield* search.find({ query: "old", type: "file" }))[0]?.path).toBe(RelativePath.make("src/old.ts"))
         expect(scans).toBe(1)
+        expect((yield* search.findWithStatus({ query: "old", type: "file" })).indexTruncated).toBe(true)
 
         yield* TestClock.adjust("10 seconds")
         yield* search.find({ query: "old", type: "file" })
@@ -180,12 +182,14 @@ describe("FileSystemSearch", () => {
 
         expect((yield* search.find({ query: "old", type: "file" }))[0]?.path).toBe(RelativePath.make("src/old.ts"))
         expect(scans).toBe(2)
+        expect((yield* search.findWithStatus({ query: "old", type: "file" })).indexTruncated).toBe(true)
         yield* Deferred.succeed(release, undefined)
         const refreshed = yield* Effect.gen(function* () {
           yield* Effect.yieldNow
           return yield* search.find({ query: "new", type: "file" })
         }).pipe(Effect.repeat({ until: (entries) => entries.length > 0 }))
         expect(refreshed[0]?.path).toBe(RelativePath.make("src/new.ts"))
+        expect((yield* search.findWithStatus({ query: "new", type: "file" })).indexTruncated).toBe(false)
         expect(scans).toBe(2)
       }).pipe(Effect.provide(layer))
     }),
