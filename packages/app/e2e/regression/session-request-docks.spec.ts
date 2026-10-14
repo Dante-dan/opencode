@@ -5,8 +5,11 @@ import { expectSessionTitle } from "../utils/waits"
 import { mockWorkspace, type WorkspaceInput } from "../utils/workspace"
 
 const directory = "C:/OpenCode/RequestDocks"
+
 const sessionID = "ses_request_docks"
+
 const title = "Request dock regression"
+
 test("shows a pending question dock", async ({ page }) => {
   await mockServer(page, {
     forms: [
@@ -69,13 +72,102 @@ test("shows a pending question dock", async ({ page }) => {
   expect(rejectRequests).toEqual([])
 
   await question.getByRole("radio", { name: /Minimal/ }).click()
+
   const reply = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
       new URL(request.url()).pathname === `/api/session/${sessionID}/form/frm_question_request/reply`,
   )
+
   await question.getByRole("button", { name: "Submit" }).click()
   expect((await reply).postDataJSON()).toEqual({ answer: { q0: "minimal" } })
+})
+
+test("replies with predefined choices and the edited custom multiselect answer", async ({ page }) => {
+  await mockServer(page, {
+    forms: [
+      {
+        id: "frm_question_multiselect",
+        sessionID,
+        title: "Questions",
+        metadata: { kind: "question" },
+        fields: [
+          {
+            key: "q0",
+            type: "multiselect",
+            title: "Include",
+            description: "Which supporting surfaces should remain visible?",
+            options: [
+              { value: "files", label: "Changed files" },
+              { value: "terminal", label: "Terminal" },
+            ],
+            custom: true,
+          },
+        ],
+      },
+    ],
+  })
+
+  await page.goto(sessionHref(sessionID))
+  await expectSessionTitle(page, title)
+  const question = page.locator('[data-component="dock-prompt"][data-kind="question"]')
+  const files = question.getByRole("checkbox", { name: "Changed files", exact: true })
+  const terminal = question.getByRole("checkbox", { name: "Terminal", exact: true })
+  const custom = question.getByRole("checkbox", { name: "Type your own answer…", exact: true })
+  const input = question.getByRole("textbox", { name: "Type your own answer…", exact: true })
+  const cancellations: string[] = []
+  page.on("request", (request) => {
+    if (
+      request.method() === "DELETE" &&
+      new URL(request.url()).pathname === `/api/session/${sessionID}/form/frm_question_multiselect`
+    )
+      cancellations.push(request.url())
+  })
+
+  await expect(files).not.toBeChecked()
+  await files.click()
+  await input.fill("Original custom answer")
+  await expect(custom).toBeChecked()
+  await expect(files).toBeChecked()
+  await terminal.click()
+  await expect(terminal).toBeChecked()
+  await expect(custom).toBeChecked()
+  await expect(files).toBeChecked()
+
+  await custom.click()
+  await expect(custom).not.toBeChecked()
+  await expect(input).toHaveValue("Original custom answer")
+  await expect(files).toBeChecked()
+  await expect(terminal).toBeChecked()
+  await input.focus()
+  await expect(custom).not.toBeChecked()
+  await expect(files).toBeChecked()
+  await expect(terminal).toBeChecked()
+  await custom.click()
+  await expect(custom).toBeChecked()
+  await expect(input).toHaveValue("Original custom answer")
+  await expect(files).toBeChecked()
+  await expect(terminal).toBeChecked()
+
+  await input.fill("Updated custom answer")
+  await input.press("Escape")
+  await expect(input).not.toBeFocused()
+  await expect(question.getByRole("button", { name: "Submit", exact: true })).toBeEnabled()
+  await expect(input).toHaveValue("Updated custom answer")
+  await expect(custom).toBeChecked()
+  await expect(files).toBeChecked()
+  await expect(terminal).toBeChecked()
+  expect(cancellations).toEqual([])
+
+  const reply = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/api/session/${sessionID}/form/frm_question_multiselect/reply`,
+  )
+
+  await question.getByRole("button", { name: "Submit", exact: true }).press("Control+Enter")
+  expect((await reply).postDataJSON()).toEqual({ answer: { q0: ["files", "terminal", "Updated custom answer"] } })
+  expect(cancellations).toEqual([])
 })
 
 test("shows a pending permission dock", async ({ page }) => {
@@ -126,18 +218,23 @@ test("restores the draft caret before typing after a request dock closes", async
 
   const editor = page.locator('[data-component="composer-editor"][contenteditable="true"]')
   const draft = "keep the caret at the end"
+
   const caret = () =>
     editor.evaluate((element) => {
       const selection = window.getSelection()
+
       if (!selection?.rangeCount || !element.contains(selection.anchorNode)) return -1
       const range = selection.getRangeAt(0).cloneRange()
       range.selectNodeContents(element)
       range.setEnd(selection.anchorNode!, selection.anchorOffset)
+
       return range.toString().length
     })
+
   await editor.fill(draft)
   // The editor places the caret after the filled text; move it only from that known position.
   await expect.poll(caret).toBe(draft.length)
+
   for (let index = 0; index < 4; index++) await page.keyboard.press("ArrowLeft")
   const cursor = draft.length - 4
   await expect.poll(caret).toBe(cursor)

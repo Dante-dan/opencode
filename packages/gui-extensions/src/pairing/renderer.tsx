@@ -5,9 +5,18 @@ import type definition from "./index"
 const setup: Setup<typeof definition> = (ctx) => {
   if (!ctx.desktop) return
   const layout = ctx.layout
+  const servers = ctx.servers
+  const pairing = ctx.uses.pairing
   const Page = lazy(() => import("./page"))
   // Settings rows are small; load them while idle so settings opens without a blank row.
   onCleanup(onIdle(() => void Page.preload()))
+
+  // The desktop's own server. Its ref is already authenticated in this window, so codes need no main process.
+  const local = () =>
+    servers
+      .list()
+      .map((id) => servers.get(id))
+      .find((server) => server?.builtin)
 
   ctx.add(SettingsPage, {
     id: "pairing",
@@ -17,8 +26,19 @@ const setup: Setup<typeof definition> = (ctx) => {
       return ctx.t("title")
     },
     get entries() {
+      const pairingEntry = { id: "pairing", title: ctx.t("title"), keywords: "pair device qr phone remote" }
+
+      // Remote access and the display setting exist only while pairing's main side answers.
+      if (pairing().status !== "active") return [pairingEntry]
+
       return [
-        { id: "pairing", title: ctx.t("title"), keywords: "pair device qr local" },
+        pairingEntry,
+        {
+          id: "settings-remote-access",
+          title: ctx.t("remote.title"),
+          description: ctx.t("remote.description"),
+          keywords: "internet tunnel opentunnel",
+        },
         {
           id: "settings-keep-screen-active",
           title: ctx.t("screenActive.title"),
@@ -29,7 +49,7 @@ const setup: Setup<typeof definition> = (ctx) => {
     },
     render: () => (
       <Suspense>
-        <Page pairing={ctx.uses.pairing} />
+        <Page server={local} pairing={pairing} />
       </Suspense>
     ),
   })

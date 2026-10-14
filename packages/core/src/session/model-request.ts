@@ -24,7 +24,7 @@ import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Content } from "@opencode/schema/tool"
 import { Cause, Context, Effect, Layer, Result, Stream } from "effect"
-import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { App } from "../app.js"
 import { Permission } from "../permission.js"
@@ -126,10 +126,24 @@ const mimeToModality = (mime: string) => {
   if (mime === "application/pdf") return "pdf"
 }
 
-const unsupportedMedia = (mime: string, name: string | undefined, capabilities: Model.Capabilities) => {
+// xAI rejects any other image type (e.g. GIF) with invalid_image, and the stored image would fail every later turn.
+const XAI_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"])
+
+const unsupportedMedia = (
+  mime: string,
+  name: string | undefined,
+  capabilities: Model.Capabilities,
+  provider: string | undefined,
+) => {
   const modality = mimeToModality(mime)
-  if (!modality || capabilities.input.some((item) => item.startsWith(modality))) return
-  return `ERROR: Cannot read ${name ? `"${name}"` : modality} (this model does not support ${modality} input). Inform the user.`
+  if (!modality) return
+  const unsupported = !capabilities.input.some((item) => item.startsWith(modality))
+    ? modality
+    : provider === "xai" && modality === "image" && !XAI_IMAGE_MIMES.has(mime.toLowerCase())
+      ? mime
+      : undefined
+  if (!unsupported) return
+  return `ERROR: Cannot read ${name ? `"${name}"` : modality} (this model does not support ${unsupported} input). Inform the user.`
 }
 
 // Remote and provider-referenced media carry no local payload and never count toward the inline budget.
@@ -166,8 +180,11 @@ const replaceMedia = (
       : new Message({ ...message, content })
   })
 
-export const unsupportedParts = (messages: LLMRequest["messages"], capabilities: Model.Capabilities) =>
-  replaceMedia(messages, (media) => unsupportedMedia(media.mime, media.name, capabilities))
+export const unsupportedParts = (
+  messages: LLMRequest["messages"],
+  capabilities: Model.Capabilities,
+  provider?: string,
+) => replaceMedia(messages, (media) => unsupportedMedia(media.mime, media.name, capabilities, provider))
 
 export const boundImages = (messages: LLMRequest["messages"]) => {
   const isImage = (mime: string) => mime.toLowerCase().startsWith("image/")
@@ -277,7 +294,7 @@ export const layer = Layer.effect(
         // TODO: Persist cache lineage so nested forks reuse the root session's cache key.
         promptCacheKey: /^ses_[0-9a-f]{64}$/.test(affinity) ? affinity.slice(4) : affinity,
         system: shaped.system,
-        messages: boundImages(unsupportedParts(shaped.messages, model.capabilities)),
+        messages: boundImages(unsupportedParts(shaped.messages, model.capabilities, model.model.provider)),
         tools: Array.from(hooked, ([name, t]) => ({ ...t, name })),
         toolChoice: input.toolChoice,
         generation: Object.keys(generation).length === 0 ? undefined : generation,
@@ -381,17 +398,19 @@ export const layer = Layer.effect(
         retry: (event: Parameters<Prepared["retry"]>[0]) =>
           hooks.trigger("session", "retry", event).pipe(Effect.asVoid),
         // Permission.assert and the question tool throw declines as defects so tools cannot
-        // catch them and turn a "no" into model-visible output. Recover them here as failures.
+        // catch them and turn a "no" into model-visible output. Recover them here as failures,
+        // including declines a tool rethrew and its wrapper attached to a Tool.Error, as Promise
+        // plugin tools do.
         executeTool: (call: Parameters<Prepared["executeTool"]>[0]) =>
           tools.execute({ ...call, definitions: hooked }).pipe(
             Effect.catchCauseFilter(
               (cause) => {
-                const decline = cause.reasons.flatMap((r) =>
-                  Cause.isDieReason(r) &&
-                  (r.defect instanceof Permission.DeclinedError || r.defect instanceof QuestionTool.CancelledError)
-                    ? [r.defect]
-                    : [],
-                )[0]
+                const decline = cause.reasons
+                  .map((r) => (Cause.isDieReason(r) ? r.defect : Cause.isFailReason(r) ? r.error.error : undefined))
+                  .find(
+                    (value): value is Permission.DeclinedError | QuestionTool.CancelledError =>
+                      value instanceof Permission.DeclinedError || value instanceof QuestionTool.CancelledError,
+                  )
                 return decline ? Result.succeed(decline) : Result.fail(cause)
               },
               (decline) => Effect.fail(decline),

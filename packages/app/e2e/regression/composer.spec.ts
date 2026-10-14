@@ -4,9 +4,93 @@ import { openDraft, openSession } from "../utils/workspace"
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] })
 
+test("a catalog refresh cannot replace an existing session's model", async ({ page }) => {
+  const alpha = { id: "alpha", name: "Alpha", variants: { high: {} } }
+  const beta = { id: "beta", name: "Beta" }
+  const catalog = { current: provider(alpha, beta) }
+  const switches: unknown[] = []
+  const prompts: unknown[] = []
+  const sessionID = "ses_catalog_selection"
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === `/api/session/${sessionID}/model`)
+      switches.push(request.postDataJSON())
+  })
+
+  const view = await openSession(page, {
+    name: "CatalogSelection",
+    sessions: [{ id: sessionID, agent: "build", model: { id: "alpha", providerID: "opencode", variant: "high" } }],
+    provider: () => catalog.current,
+    onPrompt: (input) => void prompts.push(input.body),
+    seed: { storage: { "opencode.global.dat:model": { recent: [{ providerID: "opencode", modelID: "beta" }] } } },
+  })
+
+  const control = page.locator('[data-action="composer-model"]')
+  await expect(control).toHaveText("Alpha")
+  await view.editor.fill("Keep my selected model")
+
+  catalog.current = provider(beta)
+  await view.push([
+    {
+      id: "evt_catalog_missing",
+      created: T0 + 1,
+      type: "model.updated",
+      location: { directory: view.directory },
+      data: {},
+    },
+  ])
+  await expect(control).toHaveText("Select model")
+  await view.editor.press("Enter")
+  await expect(page.getByText("Select an agent and model", { exact: true })).toBeVisible()
+  await expect(view.editor).toHaveText("Keep my selected model")
+  expect(switches).toEqual([])
+  expect(prompts).toEqual([])
+
+  catalog.current = provider(alpha, beta)
+  await view.push([
+    {
+      id: "evt_catalog_restored",
+      created: T0 + 2,
+      type: "model.updated",
+      location: { directory: view.directory },
+      data: {},
+    },
+  ])
+  await expect(control).toHaveText("Alpha")
+  await expect(page.getByRole("button", { name: "Choose model variant", exact: true })).toHaveText("high")
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(switches).toEqual([{ model: { id: "alpha", providerID: "opencode", variant: "high" } }])
+
+  catalog.current = provider(beta)
+  await view.push([
+    {
+      id: "evt_catalog_removed",
+      created: T0 + 3,
+      type: "model.updated",
+      location: { directory: view.directory },
+      data: {},
+    },
+  ])
+  await expect(control).toHaveText("Select model")
+  await control.click()
+  await page
+    .getByRole("dialog", { name: "Select model" })
+    .getByRole("button", { name: "Beta Free", exact: true })
+    .click()
+  await expect(control).toHaveText("Beta")
+  await view.editor.fill("Use the replacement I chose")
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(2)
+  expect(switches).toEqual([
+    { model: { id: "alpha", providerID: "opencode", variant: "high" } },
+    { model: { id: "beta", providerID: "opencode" } },
+  ])
+})
+
 async function draft(page: Page) {
   const { editor } = await openDraft(page, { name: "ComposerDraft", provider: NO_PROVIDER })
   await editor.click()
+
   return editor
 }
 
@@ -15,9 +99,11 @@ async function expectCaretVisible(input: Locator) {
     .poll(() =>
       input.evaluate((element) => {
         const selection = window.getSelection()
+
         if (!selection?.isCollapsed || !selection.rangeCount || !element.contains(selection.anchorNode)) return false
         const caret = selection.getRangeAt(0).getBoundingClientRect()
         const viewport = (element.closest("[data-scrollable]") ?? element).getBoundingClientRect()
+
         return caret.height > 0 && caret.top >= viewport.top - 1 && caret.bottom <= viewport.bottom + 1
       }),
     )
@@ -28,11 +114,14 @@ test("keeps a 25000-line crash report editable in a new session", async ({ page 
   const input = await draft(page)
   const text = "Thread 0 Crashed:\n" + "0   Example  0x0000000100000000 frame + 32\n".repeat(25000) + "End of report"
   await page.evaluate((text) => navigator.clipboard.writeText(text), text)
+
   const events = await input.evaluateHandle((element) => {
     const events = { count: 0 }
     element.addEventListener("input", () => events.count++)
+
     return events
   })
+
   await page.keyboard.press("ControlOrMeta+V")
   await expect.poll(async () => (await input.innerText()) === text).toBe(true)
   expect(await events.evaluate((events) => events.count)).toBe(1)
@@ -46,6 +135,7 @@ test("keeps a 25000-line crash report editable in a new session", async ({ page 
   await expectCaretVisible(input)
   const thumb = await scroll.locator(".scroll-view__thumb").boundingBox()
   const bounds = await scroll.boundingBox()
+
   if (!thumb || !bounds) throw new Error("Missing composer scrollbar bounds")
   await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2)
   await page.mouse.down()
@@ -56,6 +146,26 @@ test("keeps a 25000-line crash report editable in a new session", async ({ page 
   await page.keyboard.press("ControlOrMeta+Home")
   await page.keyboard.press("ControlOrMeta+End")
   await expectCaretVisible(input)
+})
+
+test("a key-up never moves the caret back after later navigation", async ({ page }) => {
+  const input = await draft(page)
+  await input.pressSequentially("first line")
+  await expect(input).toHaveText("first line")
+
+  // Navigation can land before the next frame; the cursor a key-up recorded must not overwrite it there.
+  const offset = await input.evaluate(async (element) => {
+    const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()!
+    const selection = window.getSelection()!
+    selection.collapse(text, 0)
+    element.dispatchEvent(new KeyboardEvent("keyup", { key: "Home", bubbles: true }))
+    selection.collapse(text, text.textContent!.length)
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
+    return selection.anchorOffset
+  })
+
+  expect(offset).toBe("first line".length)
 })
 
 for (const [width, direction] of [
@@ -83,6 +193,7 @@ for (const [width, direction] of [
 
 test("pastes plain text without markup and keeps native undo", async ({ page }) => {
   const input = await draft(page)
+
   for (const text of [
     "single line <b> &amp;",
     "first\nsecond",
@@ -110,13 +221,16 @@ test("replaces only the selected text and leaves the caret after the paste", asy
   await page.keyboard.type("before replace after")
   await expect(input).toHaveText("before replace after")
   await page.evaluate(() => document.fonts.ready)
+
   const word = await input.evaluate((element) => {
     const range = document.createRange()
     range.setStart(element.firstChild!, 7)
     range.setEnd(element.firstChild!, 14)
     const rect = range.getBoundingClientRect()
+
     return { x: rect.x, y: rect.y + rect.height / 2, width: rect.width }
   })
+
   await page.mouse.move(word.x, word.y)
   await page.mouse.down()
   await page.mouse.move(word.x + word.width, word.y, { steps: 5 })
@@ -141,9 +255,11 @@ test("shows the dropzone and attaches a dropped file", async ({ page }) => {
   })
   const surface = page.locator('[data-component="new-session"]')
   const dropzone = page.locator('[data-component="session-dropzone"]')
+
   const transfer = await page.evaluateHandle(() => {
     const value = new DataTransfer()
     value.items.add(new File(["Dropzone fixture"], "dropzone.txt", { type: "text/plain" }))
+
     return value
   })
 
@@ -180,7 +296,47 @@ test("keeps a narrow session composer contained when invoking a built-in", async
   await page.getByRole("menuitem", { name: "Commands" }).click()
   await page.locator('[data-suggestion-id="model.choose"]').click()
 
+  const dialog = page.getByRole("dialog", { name: "Select model", exact: true })
+  const search = dialog.getByRole("searchbox", { name: "Search models", exact: true })
+  await expect(search).toBeFocused()
   await expect(editor).toHaveText("keep me")
+  await page.keyboard.press("Escape")
+  await expect(dialog).toBeHidden()
+
+  await editor.fill("/model")
+  await expect(page.locator('[data-suggestion-id="model.choose"]')).toHaveAttribute("data-active", "")
+  await editor.press("Enter")
+  await expect(search).toBeFocused()
+  await expect(editor).toBeEmpty()
+})
+
+test("keeps focus in a dialog that replaces the model dialog and returns it to the composer caret", async ({
+  page,
+}) => {
+  const { editor } = await openSession(page, { name: "ComposerDialogFocus", provider: NO_PROVIDER })
+  await editor.fill("keep me")
+  await editor.press("End")
+  await editor.press("ArrowLeft")
+  await editor.press("ArrowLeft")
+  await editor.press("ArrowLeft")
+  await editor.press("ControlOrMeta+'")
+
+  const models = page.getByRole("dialog", { name: "Select model", exact: true })
+  await expect(models.getByRole("searchbox", { name: "Search models", exact: true })).toBeFocused()
+  await models.getByRole("button", { name: "Manage models", exact: true }).click()
+  await expect(models).toBeHidden()
+
+  const manage = page.getByRole("dialog", { name: "Manage models", exact: true })
+  const search = manage.getByRole("searchbox", { name: "Search models", exact: true })
+  await expect(search).toBeFocused()
+  // Code behind the dialog that focuses the composer must not pull focus out of the open dialog.
+  await editor.evaluate((element) => element.focus())
+  await expect(search).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(manage).toBeHidden()
+  await expect(editor).toBeFocused()
+  await page.keyboard.type(",")
+  await expect(editor).toHaveText("keep, me")
 })
 
 test("lists slash commands in their built-in order", async ({ page }) => {
@@ -194,6 +350,7 @@ test("lists slash commands in their built-in order", async ({ page }) => {
     // A sent message enables /undo, /compact and /fork.
     pageMessages: () => ({ items: [{ id: "msg_slash", type: "user", text: "Hello", time: { created: T0 } }] }),
   })
+
   await editor.fill("/")
   await expect(page.locator('[data-component="composer-suggestions"] [data-suggestion-id] bdi')).toHaveText([
     "/init",
@@ -213,6 +370,7 @@ test("lists slash commands in their built-in order", async ({ page }) => {
 })
 
 const followUp = "Add follow-up, / for commands, @ for context…"
+
 for (const row of [
   { state: "an idle", copy: "Ask anything, / for commands, @ for context…" },
   { state: "a running", copy: followUp, sessionStatus: { ses_placeholder: { type: "running" } } },
@@ -238,6 +396,7 @@ for (const row of [
       sessionStatus: row.sessionStatus,
       inbox: row.inbox,
     })
+
     const scroll = page.locator('[data-component="composer-scroll"]')
     await expect(scroll).toHaveText(row.copy)
     await editor.pressSequentially("!")
@@ -245,11 +404,63 @@ for (const row of [
   })
 }
 
+test("marks a Console provider with its workspace only when it is also connected directly", async ({ page }) => {
+  const model = (id: string, name: string) => ({ [id]: { id, name, limit: { context: 200_000 } } })
+
+  const managed = (id: string, canonical: string, name: string, models: ReturnType<typeof model>) => ({
+    id,
+    canonical,
+    integrationID: "opencode",
+    name: `Anomaly / ${name}`,
+    models,
+  })
+
+  await openSession(page, {
+    name: "ComposerConsoleProviders",
+    provider: {
+      all: [
+        managed("opencode", "opencode", "OpenCode", model("console-model", "Console Model")),
+        managed("console-google", "google", "Google", model("managed-gemini", "Managed Gemini")),
+        managed("console-openai", "openai", "OpenAI", model("managed-gpt", "Managed GPT")),
+        { id: "google", canonical: "google", name: "Google", models: model("direct-gemini", "Direct Gemini") },
+      ],
+      connected: ["opencode", "console-google", "console-openai", "google"],
+      default: { providerID: "opencode", modelID: "console-model" },
+    },
+    seed: {
+      storage: {
+        "opencode.global.dat:model": {
+          user: [
+            ["opencode", "console-model"],
+            ["console-google", "managed-gemini"],
+            ["console-openai", "managed-gpt"],
+            ["google", "direct-gemini"],
+          ].map(([providerID, modelID]) => ({ providerID, modelID, visibility: "show" })),
+          recent: [],
+          variant: {},
+        },
+      },
+    },
+  })
+
+  await page.locator('[data-component="composer"] [data-action="composer-model"]').click()
+  const menu = page.getByRole("menu")
+  await expect(menu.getByRole("menuitemradio", { name: "Direct Gemini", exact: true })).toBeVisible()
+  const headings = menu.locator('[data-slot="menu-v2-group-label"]')
+  await expect(headings).toHaveCount(4)
+  await expect(headings.filter({ hasText: /^GoogleAnomaly$/ })).toHaveCount(1)
+  await expect(headings.filter({ hasText: /^Google$/ })).toHaveCount(1)
+  await expect(headings.filter({ hasText: /^OpenAI$/ })).toHaveCount(1)
+  await expect(headings.filter({ hasText: /^OpenCode$/ })).toHaveCount(1)
+  await expect(menu.getByText(/Anomaly \//)).toHaveCount(0)
+})
+
 test("shows thinking on hover or a non-default selection while preserving keyboard access", async ({ page }) => {
   const { editor: input } = await openSession(page, {
     name: "ComposerThinking",
     provider: provider({ id: "thinking-model", name: "Thinking Model", variants: { high: {} } }),
   })
+
   const composer = page.locator('[data-component="composer"]')
   const control = composer.getByRole("button", { name: "Choose model variant" })
   const option = (name: string) => page.getByRole("menuitemradio", { name, exact: true })

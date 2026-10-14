@@ -5,7 +5,9 @@ import type { Platform } from "./machine"
 import { requiresStableMacInstaller, stableMacDownload } from "./migration"
 
 const updateClient = pkg.autoUpdater
+
 const restartTimeout = 10_000
+
 const stableArtifact = "https://opencode.ai/update/api/latest/desktop/opencode"
 
 export const make = Effect.fn("Updater.platform")(function* (channel: string) {
@@ -36,13 +38,31 @@ export const make = Effect.fn("Updater.platform")(function* (channel: string) {
       try: async () => {
         if (external) {
           const response = await fetch(stableArtifact, { headers: { "User-Agent": userAgent } })
+
           if (!response.ok) throw new Error(`Stable OpenCode update check failed: ${response.status}`)
           const download = stableMacDownload(await response.json(), process.arch)
+
           if (!download) throw new Error("Stable OpenCode download is unavailable")
+
           return { mode: "external", ...download } as const
         }
+
         const result = await updateClient.checkForUpdates()
+
         if (!result?.isUpdateAvailable) return undefined
+        const files = result.updateInfo.files
+        // electron-updater picks the installer whose name contains process.arch, which emulation on Windows ARM64
+        // reports as x64. downloadUpdate() reads this same list, so keeping only the ARM64 installer moves the install
+        // to the native build. macOS needs nothing here: electron-updater already prefers arm64 under Rosetta.
+        const native = files.filter((file) => file.url.includes("arm64"))
+
+        if (process.platform === "win32" && app.runningUnderARM64Translation && native.length > 0) {
+          files.splice(0, files.length, ...native)
+          runFork(
+            Effect.logInfo("updating emulated x64 install to native ARM64", { urls: native.map((file) => file.url) }),
+          )
+        }
+
         return { mode: "restart", version: result.updateInfo.version } as const
       },
       catch: (error) => error,
@@ -58,8 +78,11 @@ function stageUpdate(options: { readonly differential: boolean }) {
     return Effect.tryPromise({
       try: () => {
         // Only the NSIS cache goes stale: macOS refreshes its cached zip with every download and AppImage reads the
-        // blockmap embedded in the running file.
-        updateClient.disableDifferentialDownload = process.platform === "win32" && !options.differential
+        // blockmap embedded in the running file. An emulated x64 install updates to the ARM64 installer, which cannot
+        // be patched from the cached x64 one.
+        updateClient.disableDifferentialDownload =
+          process.platform === "win32" && (!options.differential || app.runningUnderARM64Translation)
+
         return updateClient.downloadUpdate()
       },
       catch: (error) => error,
@@ -70,10 +93,12 @@ function stageUpdate(options: { readonly differential: boolean }) {
       autoUpdater.removeListener("update-downloaded", complete)
       updateClient.removeListener("error", fail)
     }
+
     const complete = () => {
       cleanup()
       resume(Effect.void)
     }
+
     const fail = (error: Error) => {
       cleanup()
       resume(Effect.fail(error))
@@ -82,6 +107,7 @@ function stageUpdate(options: { readonly differential: boolean }) {
     autoUpdater.once("update-downloaded", complete)
     updateClient.once("error", fail)
     void updateClient.downloadUpdate().catch(fail)
+
     return Effect.sync(cleanup)
   })
 }
@@ -91,10 +117,12 @@ const installAndRestart = Effect.callback<void, Error>((resume) => {
     autoUpdater.removeListener("before-quit-for-update", started)
     updateClient.removeListener("error", fail)
   }
+
   const started = () => {
     cleanup()
     resume(Effect.void)
   }
+
   const fail = (error: Error) => {
     cleanup()
     resume(Effect.fail(error))
@@ -102,11 +130,13 @@ const installAndRestart = Effect.callback<void, Error>((resume) => {
 
   autoUpdater.once("before-quit-for-update", started)
   updateClient.once("error", fail)
+
   try {
     updateClient.quitAndInstall()
   } catch (error) {
     fail(error instanceof Error ? error : new Error(String(error)))
   }
+
   return Effect.sync(cleanup)
 }).pipe(
   Effect.timeoutOrElse({
@@ -122,6 +152,7 @@ const installAndRestart = Effect.callback<void, Error>((resume) => {
 function openExternal(url: string) {
   if (!URL.canParse(url) || !["http:", "https:"].includes(new URL(url).protocol))
     return Effect.logWarning("blocked external target", { url })
+
   return Effect.tryPromise(() => shell.openExternal(url)).pipe(
     Effect.catch((error) => Effect.logError("failed to open external target", { url, error })),
   )

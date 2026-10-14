@@ -32,6 +32,7 @@ import {
   type MountedSession,
   type Mutable,
   type PanelFrame,
+  type Panel,
   type PanelTab,
   type Router,
   type Servers,
@@ -41,11 +42,14 @@ import {
   type Storage,
   type Workspaces,
 } from "../sdk"
+import barStyles from "./bar.css?inline"
+import type { History } from "./history"
 import browserEn from "./i18n/en"
 import type definition from "./index"
 import { createModel } from "./model"
 import SessionBrowserPane from "./panel"
 import { BrowserPane, type PaneEvent } from "./ipc"
+import { refusal } from "./policy"
 
 /** The renderer host pieces the pane runs on, passed in by `packages/app/component-tests/browser-pane.spec.ts`. */
 type PaneHost = {
@@ -73,7 +77,34 @@ type PaneFixtureState = {
   picker: Record<string, boolean | undefined>
   highlights: { sessionKey: string; ref?: Browser.Ref }[]
   comments: ComposerNote[]
+  /** The page's zoom as main last reported it. */
+  zoom: number
+  /** The browser history store. */
+  history: History
+  /** URLs the pane opened in the system browser. */
+  external: string[]
+  /** Cookies the page's address can read. */
+  cookies: number
 }
+
+// A 16px blue square, as main reports a page icon.
+const icon =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzNiODJmNiIvPjwvc3ZnPg=="
+
+const visits: History["visits"] = [
+  {
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements",
+    title: "HTML elements reference - HTML | MDN",
+    icon,
+  },
+  {
+    url: "https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Colors/Color_format_converter",
+    title: "Color format converter - CSS | MDN",
+    icon,
+  },
+  { url: "http://localhost:5173/settings", title: "Settings - Preview" },
+  { url: "https://alpha.example/", title: "Alpha" },
+]
 
 // Component-test fixture: the real pane on the real host embeds, with the desktop faked at its two
 // boundaries: the model's main-process pane (tab state, picker events) and the host bridge that shows native views.
@@ -105,6 +136,10 @@ export function mountBrowserPane(input: PaneHost) {
       picker: {},
       highlights: [],
       comments: [],
+      zoom: 1,
+      history: { visits: [] },
+      external: [],
+      cookies: 3,
     })
 
     // Each capture waits until the fixture releases it, so a spec can observe the pending state.
@@ -151,12 +186,19 @@ export function mountBrowserPane(input: PaneHost) {
     // SAFETY: the host embeds call only `embed` and `capture` on their bridge (`runtime/extension/embeds.tsx`).
     const embeds = input.createEmbeds({ bridge: bridge as Bridge, zoom: () => 1, dialog: () => false })
 
+    const t = (key: string, params?: Readonly<Partial<Record<string, string | number>>>) =>
+      (messages.get(key) ?? language.t(key)).replace(/\{\{(\w+)\}\}/g, (_, name: string) =>
+        String(params?.[name] ?? ""),
+      )
+
     const base = {
       id: "browser",
       keybinds: { keybind: () => [], keys: (bind: string) => bind.split("+") },
       desktop: { zoom: () => 1 },
       embeds,
-      t: (key: string) => messages.get(key) ?? language.t(key),
+      t,
+      // English plural forms, as the host picks them.
+      plural: (key: string, count: number) => t(`${key}.${count === 1 ? "one" : "other"}`, { count }),
     }
 
     const panel: PanelFrame = {
@@ -169,7 +211,14 @@ export function mountBrowserPane(input: PaneHost) {
       open: () => [],
     }
 
-    const server = { id: "browser-test", compatible: true, data: { on: () => () => undefined } }
+    const server = {
+      id: "browser-test",
+      name: "Local",
+      local: true,
+      compatible: true,
+      data: { on: () => () => undefined },
+    }
+
     const [reads, setReads] = createStore({ directory: 0 })
 
     // Frozen session refs, as the real host supplies. Only the key belongs in the pane's transient state.
@@ -240,7 +289,10 @@ export function mountBrowserPane(input: PaneHost) {
       load: async () => undefined,
       command: async (value) => {
         const command = value.command
+        // Main refuses what it does not open before anything happens, naming why.
+        const reason = command.type === "navigate" ? refusal(command.url) : undefined
 
+        if (reason) throw new Error(reason)
         setStore("error", undefined)
 
         if (command.type === "navigate" || command.type === "reload") setStore("loadErrors", store.session, undefined)
@@ -272,6 +324,20 @@ export function mountBrowserPane(input: PaneHost) {
         if (!key) throw new Error("Unknown highlight binding")
         setStore("highlights", (items) => [...items, { sessionKey: key, ref: value.ref }])
       },
+      // Main steps through Chromium's presets and reports the page's new zoom.
+      zoom: async (value) => {
+        const steps = [0.9, 1, 1.1, 1.25]
+        const index = steps.indexOf(store.zoom)
+        const next = value.zoom === "reset" ? 1 : (steps[index + (value.zoom === "in" ? 1 : -1)] ?? store.zoom)
+        setStore("zoom", next)
+        emit(store.session, { type: "page", tabID: value.tabID, zoom: next })
+      },
+      site: async () => ({ cookies: store.cookies }),
+      // Main deletes the site's data and reloads the page.
+      clearSite: async () => {
+        setStore({ cookies: 0, generation: store.generation + 1 })
+        report()
+      },
       close: async () => undefined,
       state: () => undefined,
       on: (_name, listener) => {
@@ -292,6 +358,18 @@ export function mountBrowserPane(input: PaneHost) {
       screen: { current: () => screen },
       layout: { narrow: () => false, stored: () => [], state: () => "visible", open() {}, close() {} },
       links: { open() {} },
+      stores: {
+        history: {
+          get value() {
+            return store.history
+          },
+          set: (next: History) => setStore("history", reconcile(next)),
+        },
+      },
+      system: {
+        copy: async () => undefined,
+        openExternal: (url: string) => setStore("external", (items) => [...items, url]),
+      },
     }
 
     // SAFETY: the real model and pane use only the host boundaries implemented above in this fixture's flows.
@@ -319,6 +397,9 @@ export function mountBrowserPane(input: PaneHost) {
     return (
       <ExtensionContext.Provider value={extension}>
         <PanelContext.Provider value={panel}>
+          {/* The extension contributes the bar's styles through the host's Style registry, which this fixture skips.
+              Menus and suggestions portal into <body>, under this fixture's fixed host unless raised above it. */}
+          <style>{`${barStyles}\n[data-popper-positioner] { z-index: 1001 !important; }`}</style>
           <h1 style={{ "font-size": "24px", "margin-bottom": "16px" }}>Browser pane lifecycle</h1>
           <nav style={{ display: "flex", "flex-wrap": "wrap", gap: "12px", margin: "16px 0" }}>
             <For each={["Alpha", "Beta", "Empty"]}>
@@ -364,7 +445,7 @@ export function mountBrowserPane(input: PaneHost) {
             <button onClick={() => setStore("delayNavigation", true)}>Delay navigation</button>
             <button
               onClick={() => {
-                setStore({ error: "ERR_BLOCKED_BY_CLIENT", pendingURL: undefined })
+                setStore({ error: "browser.address.web", pendingURL: undefined })
                 report()
               }}
             >
@@ -388,12 +469,26 @@ export function mountBrowserPane(input: PaneHost) {
             <button onClick={() => held.splice(0).forEach((resolve) => resolve())}>Release capture</button>
             <button onClick={() => setStore("covered", (covered) => !covered)}>Toggle popover</button>
             <button onClick={pick}>Pick element</button>
+            <button onClick={() => setStore("history", { visits })}>Seed history</button>
+            <button onClick={() => emit(store.session, { type: "page", tabID: current().id, icon, zoom: store.zoom })}>
+              Page icon
+            </button>
+            <button onClick={() => emit(store.session, { type: "address", tabID: current().id })}>
+              Address shortcut
+            </button>
           </nav>
           <p>Captures: {store.captures}</p>
+          <p>Zoom: {Math.round(store.zoom * 100)}</p>
+          <p>Visits: {store.history.visits.map((visit) => visit.url).join(" ")}</p>
+          <p>External: {store.external.join(" ")}</p>
           <p>Session getter reads: {reads.directory}</p>
           <p>Picker: {store.picker[store.session] ? "on" : "off"}</p>
           <For each={tabs}>
-            {(tab) => <p>Picker {tab.title}: {store.picker[tab.title] ? "on" : "off"}</p>}
+            {(tab) => (
+              <p>
+                Picker {tab.title}: {store.picker[tab.title] ? "on" : "off"}
+              </p>
+            )}
           </For>
           <p>Highlights: {store.highlights.map((item) => item.ref ?? "clear").join(",")}</p>
           <p>Highlight owners: {store.highlights.map((item) => item.sessionKey).join(",")}</p>
@@ -491,10 +586,16 @@ type RegionHost = {
   }): {
     keys(): readonly string[]
     active(): string | undefined
-    entry(key: string): { readonly tab: PanelTab } | undefined
+    entry(key: string): { readonly tab: PanelTab; readonly extension: string; readonly provider: Panel } | undefined
   }
   /** The real browser and file extensions. */
   definitions: readonly Definition[]
+  /** Real shell command providers for shortcut cases. */
+  Shell: ParentComponent
+  /** Shell fallback and the real extension command adapter. */
+  Commands: Component<{ close: () => void }>
+  /** The real host wrapper that renders an extension in its context. */
+  Contribution: Component<{ extension: string; children: () => JSX.Element }>
 }
 
 type RegionFixtureState = {
@@ -504,6 +605,12 @@ type RegionFixtureState = {
   registrations: { binding: string; session: string; restore: number }[]
   /** The pane's Ipc is gone, as while its main extension reloads or is disabled. */
   away: boolean
+  /** Whether the fixture's shell session was closed by its fallback shortcut. */
+  closed: boolean
+  /** The page main reports, blank or loaded. */
+  blank: boolean
+  /** Native browser tab close requests, by tab id. */
+  closes: string[]
 }
 
 // Component-test fixture: the real side region over the real browser and file extensions, with the host's
@@ -528,6 +635,9 @@ export function mountBrowserRegion(input: RegionHost) {
       },
       registrations: [],
       away: false,
+      closed: false,
+      blank: false,
+      closes: [],
     })
 
     // The file tree's state, Changes or All files, as the file extension stores it.
@@ -573,6 +683,7 @@ export function mountBrowserRegion(input: RegionHost) {
       get: () => undefined,
       missing: () => false,
       sync: async () => undefined,
+      exists: async () => true,
       search: async () => [],
     }
 
@@ -605,10 +716,10 @@ export function mountBrowserRegion(input: RegionHost) {
     const view = () => views.get(store.session) ?? fallback
 
     // One screen object while the strip mounts, whichever session it routes.
-    // SAFETY: this fixture draws tab triggers only. Its file model implements the list, normalize and focus paths;
-    // comment, composer and file-view operations are never invoked here.
+    // SAFETY: this fixture draws file tab triggers and the browser pane. Its file model implements list,
+    // normalize and focus; the browser has a composer attach callback. File-view operations are never invoked here.
     // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
-    const screen = { file } as unknown as SessionScreen
+    const screen = { file, composer: { attach() {} } } as unknown as SessionScreen
 
     const layout = (extension: string): Layout => ({
       narrow: () => false,
@@ -673,7 +784,7 @@ export function mountBrowserRegion(input: RegionHost) {
     const appearance: Appearance = { font: () => "monospace" }
     const router: Router = { routing: () => false, path: () => "/" }
     const keybinds: Keybinds = { keybind: () => [], keys: (bind) => bind.split("+"), matches: () => false }
-    const servers: Servers = { list: () => [server.id] }
+    const servers: Servers = { list: () => [server.id], get: () => undefined }
     const workspaces: Workspaces = { on: () => () => undefined }
 
     const listeners = new Set<(value: { binding: string; event: PaneEvent }) => void>()
@@ -686,9 +797,21 @@ export function mountBrowserRegion(input: RegionHost) {
         ])
       },
       load: async () => undefined,
-      command: async () => undefined,
+      command: async (value) => {
+        if (value.command.type !== "tabs.close") return
+
+        const tabID = value.command.tabID
+
+        setStore("closes", (items) => [...items, tabID])
+        listeners.forEach((listener) =>
+          listener({ binding: value.binding, event: { type: "state", state: { tabs: [], focusedTabID: null } } }),
+        )
+      },
       inspect: async () => undefined,
       highlight: async () => undefined,
+      zoom: async () => undefined,
+      site: async () => ({ cookies: 0 }),
+      clearSite: async () => undefined,
       close: async () => undefined,
       state: () => undefined,
       on: (_name, listener) => {
@@ -708,7 +831,9 @@ export function mountBrowserRegion(input: RegionHost) {
       keybinds: () => keybinds,
       servers: () => servers,
       workspaces: () => workspaces,
-      desktop: () => undefined,
+      desktop: () => ({ zoom: () => 1 }),
+      embeds: () => ({ View: () => null, capture: async () => undefined }),
+      system: () => ({ copy: async () => undefined, openExternal() {}, save: async () => false }),
       sessions: () => ({ list: () => refs, current: view }),
       screen: () => ({ current: () => screen }),
       layout,
@@ -725,8 +850,8 @@ export function mountBrowserRegion(input: RegionHost) {
 
       const tab = {
         id: tabID,
-        url: "http://localhost:4173/",
-        title: "Preview",
+        url: store.blank ? "about:blank" : "http://localhost:4173/",
+        title: store.blank ? "" : "Preview",
         loading: false,
         canGoBack: false,
         canGoForward: false,
@@ -759,6 +884,12 @@ export function mountBrowserRegion(input: RegionHost) {
         }),
       })
 
+      const browser = () => {
+        const entry = region.entry(region.active() ?? "")
+
+        return entry?.extension === "browser" ? entry : undefined
+      }
+
       return (
         <>
           {/* The host strip draws a trigger for each of these keys. */}
@@ -772,6 +903,35 @@ export function mountBrowserRegion(input: RegionHost) {
             </For>
           </div>
           <p data-testid="selected">{region.active() ?? "none"}</p>
+          <Show when={browser()}>
+            {(entry) => (
+              <PanelContext.Provider
+                value={{
+                  visible: () => true,
+                  present: () => true,
+                  placement: () => "side",
+                  reserve: () => false,
+                  animate: () => false,
+                  sidebar: { opened: () => false, width: () => 0, transition: () => false, resize() {}, toggle() {} },
+                  open: () => [tabID],
+                }}
+              >
+                <input.Contribution extension={entry().extension}>
+                  {() =>
+                    entry().provider.render({
+                      get tab() {
+                        return entry().tab
+                      },
+                      get session() {
+                        return view()
+                      },
+                      screen,
+                    })
+                  }
+                </input.Contribution>
+              </PanelContext.Provider>
+            )}
+          </Show>
         </>
       )
     }
@@ -784,31 +944,44 @@ export function mountBrowserRegion(input: RegionHost) {
 
     return (
       <DialogProvider>
-        <input.ExtensionHostProvider
-          definitions={input.definitions}
-          disabled={() => new Set<string>()}
-          apis={apis}
-          whenMounted={(run) => {
-            run()
+        <input.Shell>
+          <input.ExtensionHostProvider
+            definitions={input.definitions}
+            disabled={() => new Set<string>()}
+            apis={apis}
+            whenMounted={(run) => {
+              run()
 
-            return () => undefined
-          }}
-          ipc={(token) => (token.id === BrowserPane.id && !store.away ? pane : undefined)}
-        >
-          <h1 style={{ "font-size": "24px", "margin-bottom": "16px" }}>Restored side strip</h1>
-          <nav style={{ display: "flex", gap: "12px", margin: "16px 0" }}>
-            <button onClick={() => setStore("session", beta)}>Beta</button>
-            <button onClick={inventory}>First inventory</button>
-            <button onClick={() => setStore("away", true)}>Pane away</button>
-            <button onClick={() => setStore("away", false)}>Pane back</button>
-          </nav>
-          <p>Registrations: {store.registrations.length}</p>
-          <p>Beta restores: {latest()?.restore ?? 0}</p>
-          <p data-testid="tree">{JSON.stringify(tree())}</p>
-          <Ready>
-            <Strip />
-          </Ready>
-        </input.ExtensionHostProvider>
+              return () => undefined
+            }}
+            ipc={(token) => (token.id === BrowserPane.id && !store.away ? pane : undefined)}
+          >
+            <input.Commands close={() => setStore("closed", true)} />
+            <h1 style={{ "font-size": "24px", "margin-bottom": "16px" }}>Restored side strip</h1>
+            <nav style={{ display: "flex", gap: "12px", margin: "16px 0" }}>
+              <button onClick={() => setStore({ session: beta, closed: false })}>Beta</button>
+              <button onClick={inventory}>First inventory</button>
+              <button
+                onClick={() => {
+                  setStore("blank", true)
+                  inventory()
+                }}
+              >
+                Blank page
+              </button>
+              <button onClick={() => setStore("away", true)}>Pane away</button>
+              <button onClick={() => setStore("away", false)}>Pane back</button>
+            </nav>
+            <p>Registrations: {store.registrations.length}</p>
+            <p>Beta restores: {latest()?.restore ?? 0}</p>
+            <p data-testid="tree">{JSON.stringify(tree())}</p>
+            <p data-testid="session-state">{store.closed ? "closed" : "open"}</p>
+            <p data-testid="browser-closes">{JSON.stringify(store.closes)}</p>
+            <Ready>
+              <Strip />
+            </Ready>
+          </input.ExtensionHostProvider>
+        </input.Shell>
       </DialogProvider>
     )
   }

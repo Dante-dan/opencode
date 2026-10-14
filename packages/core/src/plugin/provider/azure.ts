@@ -1,6 +1,6 @@
 import { Clock, Effect, FiberHandle, Option, Schema, Semaphore, Stream } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
-import { ChildProcess } from "effect/unstable/process"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { ChildProcess } from "effect/process"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Form } from "@opencode/schema/form"
 import { AppProcess } from "@opencode/util/process"
@@ -11,7 +11,6 @@ import { Integration } from "../../integration.js"
 import { IntegrationConnection } from "../../integration/connection.js"
 import { Model } from "../../model.js"
 import { Provider } from "../../provider.js"
-import { iife } from "../../util/iife.js"
 import { which } from "../../util/which.js"
 import type { PluginInternal } from "../internal.js"
 import { configuredSettings } from "./configured.js"
@@ -118,61 +117,53 @@ export function make(
         )
 
       const available = Boolean(which("az"))
-      const form = () =>
-        iife(() => {
-          if (resolveResourceName(configured) || typeof configured?.baseURL === "string") return
-          return Form.Fields.make([
-            {
-              type: "string",
-              key: "resourceName",
-              title: "Enter Azure Resource Name",
-              placeholder: "e.g. my-models",
-              required: true,
-            },
-          ])
-        })
+      const configuredResource = Boolean(resolveResourceName(configured) || typeof configured?.baseURL === "string")
 
       yield* ctx.integration.transform((editor) => {
+        // The retired azure-cognitive-services provider's env var still connects Azure.
         editor.method.update({
           integrationID: Provider.ID.azure,
-          method: { type: "key", label: "API key", form: form() },
+          method: { type: "env", names: ["AZURE_API_KEY", "AZURE_COGNITIVE_SERVICES_API_KEY"] },
+        })
+        editor.method.update({
+          integrationID: Provider.ID.azure,
+          method: {
+            type: "key",
+            label: "API key",
+            form: configuredResource
+              ? undefined
+              : Form.Fields.make([
+                  {
+                    type: "string",
+                    key: "resourceName",
+                    title: "Enter Azure Resource Name",
+                    placeholder: "e.g. my-models",
+                    required: true,
+                  },
+                ]),
+          },
         })
         if (!available) return
         editor.method.update({
           integrationID: Provider.ID.azure,
           method: {
             id: methodID,
-            type: "oauth",
+            type: "external",
             label: "Microsoft Entra ID (Azure CLI)",
-            form: form(),
+            form: configuredResource
+              ? undefined
+              : Form.Fields.make([
+                  {
+                    type: "string",
+                    key: "resourceName",
+                    title: "Azure resource",
+                    placeholder: "e.g. my-models",
+                    required: true,
+                    pattern: resourcePattern.source,
+                    description: "Enter the name of your Azure OpenAI or AI Services resource.",
+                  },
+                ]),
           },
-          authorize: (answer) =>
-            Effect.succeed({
-              mode: "auto" as const,
-              url: "",
-              instructions: "Sign in with `az login` before continuing.",
-              callback: Effect.gen(function* () {
-                const resourceName =
-                  (typeof answer.resourceName === "string" ? answer.resourceName.trim() : "") ||
-                  resolveResourceName(configured)
-                if (!resourceName) return yield* Effect.fail(new Error("Azure resource name is required"))
-                const current = yield* token(cognitiveScope)
-                return Credential.OAuth.make({
-                  type: "oauth",
-                  methodID,
-                  access: current.access,
-                  refresh: "azure-cli",
-                  expires: current.expires,
-                  metadata: { resourceName },
-                })
-              }),
-            }),
-          refresh: (credential) =>
-            token(cognitiveScope).pipe(
-              Effect.map((current) =>
-                Credential.OAuth.make({ ...credential, access: current.access, expires: current.expires }),
-              ),
-            ),
         })
       })
 
@@ -235,7 +226,7 @@ export function make(
 
       const resourceDeployments = Effect.fn("AzurePlugin.resourceDeployments")(function* (
         url: string,
-        credential: Credential.Value,
+        credential: Credential.Key | Credential.External,
       ) {
         return yield* http
           .execute(
@@ -244,7 +235,7 @@ export function make(
               HttpClientRequest.setHeader("User-Agent", App.useragent(ctx.app)),
               credential.type === "key"
                 ? HttpClientRequest.setHeader("api-key", credential.key)
-                : HttpClientRequest.bearerToken(credential.access),
+                : HttpClientRequest.bearerToken((yield* token(cognitiveScope)).access),
             ),
           )
           .pipe(
@@ -266,8 +257,8 @@ export function make(
       // data-plane version 2022-12-01 has it; later versions dropped `/deployments` and keep `/models`, which lists
       // models the resource can deploy rather than its deployments.
       // https://github.com/Azure/azure-rest-api-specs/blob/main/specification/cognitiveservices/data-plane/OpenAIAuthoring/stable/2022-12-01/azureopenai.json
-      const deployments = (url: string, resource: string, credential: Credential.Value) =>
-        credential.type === "oauth"
+      const deployments = (url: string, resource: string, credential: Credential.Key | Credential.External) =>
+        credential.type === "external"
           ? managementDeployments(resource).pipe(Effect.catch(() => resourceDeployments(url, credential)))
           : resourceDeployments(url, credential)
 
@@ -308,7 +299,12 @@ export function make(
         const credential = yield* ctx.integration.connection
           .resolve(connection)
           .pipe(Effect.orElseSucceed(() => undefined))
-        if (!credential || (credential.type === "oauth" && credential.methodID !== methodID)) return
+        if (
+          !credential ||
+          credential.type === "oauth" ||
+          (credential.type === "external" && credential.methodID !== methodID)
+        )
+          return
         const found = yield* deployments(url, name, credential).pipe(
           // Azure promises no order; normalize it so a reordered response does not rebuild the model list.
           Effect.map((list) => list.toSorted((a, b) => a.name.localeCompare(b.name))),
@@ -348,6 +344,7 @@ export function make(
           : resolveResourceName(provider.settings, loaded.resource)
 
       Object.assign(loaded, yield* load())
+
       yield* ctx.provider.transform((evt) => {
         for (const item of evt.list()) {
           if (
@@ -427,7 +424,7 @@ export function make(
         const credential = connection
           ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
           : undefined
-        if (credential?.type !== "oauth" || credential.methodID !== methodID) return
+        if (credential?.type !== "external" || credential.methodID !== methodID) return
         const target = new URL(url)
         const scope =
           target.hostname.endsWith(".services.ai.azure.com") && !target.pathname.startsWith("/models")
@@ -482,12 +479,13 @@ function expandResourceName(baseURL: string, resourceName: string) {
     .replaceAll("${AZURE_COGNITIVE_SERVICES_RESOURCE_NAME}", resourceName)
 }
 
-// The Azure CLI method stores the resource as credential metadata, the API key method as its form answer.
+// The Azure CLI method stores the resource as credential metadata, the API key method as its form answer. API keys
+// imported from V1 keep their connect-form answer as metadata.
 function credentialResource(credential: Credential.Value | undefined) {
   const resource =
     credential?.type === "key"
-      ? credential.configuration?.resourceName
-      : credential?.methodID === methodID
+      ? (credential.configuration?.resourceName ?? credential.metadata?.resourceName)
+      : credential?.type === "external" && credential.methodID === methodID
         ? credential.metadata?.resourceName
         : undefined
   return typeof resource === "string" && resource.trim() !== "" ? resource : undefined

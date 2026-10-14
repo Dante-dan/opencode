@@ -1,4 +1,4 @@
-import { For, Show, createMemo, onCleanup, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
@@ -14,7 +14,6 @@ import { Mark } from "@opencode/ui/logo"
 import { Keybind } from "@opencode/ui/keybind"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { Menu } from "@opencode/ui/menu"
-import { SessionReviewV2SidebarToggle } from "@opencode/session-ui/v2/session-review-v2"
 import {
   MenuItem,
   type MountedSession,
@@ -76,17 +75,30 @@ export function SideRegion(props: {
       .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0)),
   )
 
+  let root: HTMLElement | undefined
   let tabList: HTMLDivElement | undefined
   let selectionEvent: Event | undefined
+
+  createEffect(() => {
+    if (open()) return
+    const active = document.activeElement
+
+    if (!(active instanceof HTMLElement)) return
+
+    if (!root?.contains(active)) return
+    active.blur()
+  })
 
   return (
     <Show when={isDesktop() && !!params.id}>
       <aside
+        ref={root}
         id="review-panel"
+        tabIndex={-1}
         aria-label={language.t("session.panel.reviewAndFiles")}
         aria-hidden={!open()}
         inert={!open()}
-        class="relative min-w-0 flex overflow-hidden bg-v2-background-bg-base rounded-[10px] shadow-[var(--v2-elevation-raised)]"
+        class="relative min-w-0 flex overflow-hidden bg-v2-background-bg-base rounded-[10px] shadow-[var(--v2-elevation-raised)] outline-none"
         classList={{
           "h-full shrink-0": !props.stacked,
           "h-full min-h-0": props.stacked,
@@ -147,7 +159,12 @@ export function SideRegion(props: {
                           props.region.select(value)
                       }}
                     >
-                      <div class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center">
+                      {/* Tabs and actions share the review toggle's row: the session header's 48px, or the 51px
+                          above a side dock's divider. */}
+                      <div
+                        class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center"
+                        style={{ "--tabs-bar-height": props.stacked ? "51px" : "48px" }}
+                      >
                         <Tabs.List
                           ref={(el: HTMLDivElement) => {
                             tabList = el
@@ -160,13 +177,6 @@ export function SideRegion(props: {
                             onCleanup(createTabStripScroll({ el, lead: props.region.lead }))
                           }}
                         >
-                          <div class="session-review-v2-sidebar-toggle-slot h-full shrink-0 sticky start-0 z-10 flex items-center justify-center bg-v2-background-bg-base">
-                            <SessionReviewV2SidebarToggle
-                              opened={props.sidebar.opened()}
-                              disabled={props.region.selected()?.tab.sidebar === "locked"}
-                              onToggle={props.sidebar.toggle}
-                            />
-                          </div>
                           <For each={props.region.keys()}>
                             {(key) => (
                               <Show when={props.region.entry(key)}>
@@ -197,8 +207,7 @@ export function SideRegion(props: {
                         </Tabs.List>
                         <div
                           data-slot="session-side-panel-actions"
-                          class="session-review-v2-open-in-app-slot self-start shrink-0 flex items-center gap-2 pe-3"
-                          classList={{ "h-[51px]": props.stacked, "h-12": !props.stacked }}
+                          class="session-review-v2-open-in-app-slot h-[var(--tabs-bar-height)] shrink-0 flex items-center gap-2 pe-3"
                           onPointerDown={(event) => event.stopPropagation()}
                           onClick={(event) => event.stopPropagation()}
                         >

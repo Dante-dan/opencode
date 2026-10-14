@@ -60,6 +60,7 @@ const builtins = new Map<string, () => Promise<unknown>>([
   ["@opencode/ai/providers/alibaba/messages", () => import("@opencode/ai/providers/alibaba/messages")],
   ["@opencode/ai/providers/alibaba/responses", () => import("@opencode/ai/providers/alibaba/responses")],
   ["@opencode/ai/providers/anthropic", () => import("@opencode/ai/providers/anthropic")],
+  ["@opencode/ai/providers/anthropic-compatible", () => import("@opencode/ai/providers/anthropic-compatible")],
   ["@opencode/ai/providers/azure", () => import("@opencode/ai/providers/azure")],
   ["@opencode/ai/providers/azure/chat", () => import("@opencode/ai/providers/azure/chat")],
   ["@opencode/ai/providers/azure/responses", () => import("@opencode/ai/providers/azure/responses")],
@@ -77,9 +78,14 @@ const builtins = new Map<string, () => Promise<unknown>>([
   ["@opencode/ai/providers/google/interactions", () => import("@opencode/ai/providers/google/interactions")],
   ["@opencode/ai/providers/google-vertex", () => import("@opencode/ai/providers/google-vertex")],
   ["@opencode/ai/providers/google-vertex/gemini", () => import("@opencode/ai/providers/google-vertex/gemini")],
+  [
+    "@opencode/ai/providers/google-vertex/interactions",
+    () => import("@opencode/ai/providers/google-vertex/interactions"),
+  ],
   ["@opencode/ai/providers/google-vertex/chat", () => import("@opencode/ai/providers/google-vertex/chat")],
   ["@opencode/ai/providers/google-vertex/responses", () => import("@opencode/ai/providers/google-vertex/responses")],
   ["@opencode/ai/providers/google-vertex/messages", () => import("@opencode/ai/providers/google-vertex/messages")],
+  ["@opencode/ai/providers/google-vertex/mistral", () => import("@opencode/ai/providers/google-vertex/mistral")],
   ["@opencode/ai/providers/groq", () => import("@opencode/ai/providers/groq")],
   ["@opencode/ai/providers/meta/chat", () => import("@opencode/ai/providers/meta/chat")],
   ["@opencode/ai/providers/meta/messages", () => import("@opencode/ai/providers/meta/messages")],
@@ -95,8 +101,18 @@ const builtins = new Map<string, () => Promise<unknown>>([
   ["@opencode/ai/providers/openai/chat", () => import("@opencode/ai/providers/openai/chat")],
   ["@opencode/ai/providers/openai/responses", () => import("@opencode/ai/providers/openai/responses")],
   ["@opencode/ai/providers/openai-compatible", () => import("@opencode/ai/providers/openai-compatible")],
+  [
+    "@opencode/ai/providers/openai-compatible/responses",
+    () => import("@opencode/ai/providers/openai-compatible/responses"),
+  ],
+  [
+    "@opencode/ai/providers/openai-compatible-responses",
+    () => import("@opencode/ai/providers/openai-compatible-responses"),
+  ],
   ["@opencode/ai/providers/openrouter", () => import("@opencode/ai/providers/openrouter")],
   ["@opencode/ai/providers/togetherai", () => import("@opencode/ai/providers/togetherai")],
+  ["@opencode/ai/providers/venice", () => import("@opencode/ai/providers/venice")],
+  ["@opencode/ai/providers/vercel-ai-gateway", () => import("@opencode/ai/providers/vercel-ai-gateway")],
   ["@opencode/ai/providers/xai", () => import("@opencode/ai/providers/xai")],
   ["@opencode/ai/providers/zai/chat", () => import("@opencode/ai/providers/zai/chat")],
   ["@opencode/ai/providers/zai-coding-plan/chat", () => import("@opencode/ai/providers/zai-coding-plan/chat")],
@@ -137,7 +153,7 @@ export const loadPackage = Effect.fn("Provider.loadPackage")(function* (input: s
 })
 
 /** opencode settings consumed in Core; native packages never receive them. */
-const CORE_KEYS = ["chunkTimeout", "compaction", "fetch", "headerTimeout", "timeout", "transport"] as const
+const CORE_KEYS = ["chunkTimeout", "compaction", "encoding", "fetch", "headerTimeout", "timeout", "transport"] as const
 const PROVIDER_ONLY_KEYS = ["chunkTimeout", "headerTimeout", "timeout", "transport"] as const
 
 export function nativeSettings(settings: Settings): Settings {
@@ -150,8 +166,15 @@ export function modelSettings(settings: Settings | undefined) {
 
 const decodeTimeout = Schema.decodeUnknownOption(HttpTimeout)
 
-/** Applied to `headerTimeout` and `chunkTimeout` when provider settings leave them unset or invalid. */
+/** Applied to `headerTimeout` when provider settings leave it unset or invalid. */
 export const DEFAULT_TIMEOUT_MS = 300_000
+
+/**
+ * Applied to `chunkTimeout` when provider settings leave it unset or invalid. Some providers, such as DeepSeek, have
+ * specifically asked clients to allow at least 15 minutes, because their models can stream nothing for minutes while
+ * they reason.
+ */
+export const DEFAULT_CHUNK_TIMEOUT_MS = 900_000
 
 /** One timeout setting without a default; invalid values are dropped. */
 export function timeout(value: unknown) {
@@ -163,8 +186,15 @@ export function timeouts(settings: Readonly<Record<string, unknown>>) {
   return {
     timeout: timeout(settings.timeout),
     headerTimeout: timeout(settings.headerTimeout) ?? DEFAULT_TIMEOUT_MS,
-    chunkTimeout: timeout(settings.chunkTimeout) ?? DEFAULT_TIMEOUT_MS,
+    chunkTimeout: timeout(settings.chunkTimeout) ?? DEFAULT_CHUNK_TIMEOUT_MS,
   }
+}
+
+const decodeEncoding = Schema.decodeUnknownOption(Provider.Encoding)
+
+/** Request body encoding from provider or model settings; invalid values are dropped. */
+export function encoding(settings: Readonly<Record<string, unknown>>) {
+  return Option.getOrUndefined(decodeEncoding(settings.encoding))
 }
 
 export function mergeOverlay(

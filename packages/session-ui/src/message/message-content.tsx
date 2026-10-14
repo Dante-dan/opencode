@@ -1,5 +1,16 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type ComponentProps, type JSX } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  Show,
+  type ComponentProps,
+  type JSX,
+} from "solid-js"
 import { createStore } from "solid-js/store"
+import { createMediaQuery } from "@solid-primitives/media"
 import { useData } from "../context"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
@@ -74,7 +85,7 @@ function modelLabel(
 
 function MessageActionButton(
   props: Pick<ComponentProps<"button">, "disabled" | "onMouseDown" | "onClick" | "aria-label"> & {
-    icon: "check" | "copy" | "reset"
+    icon: "check" | "copy" | "reset" | "arrow-down-to-line" | "outline-trash"
     label: JSX.Element
   },
 ) {
@@ -258,7 +269,10 @@ export function CurrentUserMessageDisplay(props: {
   const data = useData()
   const dialog = useDialog()
   const i18n = useI18n()
-  const [state, setState] = createStore({ copied: false, reverting: false })
+  const [state, setState] = createStore({ copied: false, reverting: false, updating: false })
+  const status = createMemo(() => props.actions?.pending?.status(props.message.id))
+  const pending = createMemo(() => status() !== undefined && status() !== "queued")
+  const waiting = createMemo(() => status() === "steering" || status() === "stranded")
   const attachments = createMemo(() => (props.message.files ?? []).filter(attached))
   const references = createMemo(() => props.references ?? [])
   const inlineFiles = createMemo(() => (props.message.files ?? []).filter((file) => !!file.mention))
@@ -267,10 +281,18 @@ export function CurrentUserMessageDisplay(props: {
   const model = createMemo(() => modelLabel(data, i18n, props.model))
   const timefmt = createMemo(() => new Intl.DateTimeFormat(i18n.locale(), { timeStyle: "short" }))
 
+  // Mobile shows the current agent and model in the composer and switch notices, so repeating them per message is noise.
+  const mobile = createMediaQuery("(max-width: 767px)")
+
   const metaHead = createMemo(() => {
     const agent = props.agent
+    const pendingLabel = waiting() ? i18n.t("ui.message.pending") : ""
 
-    return [agent ? agent[0]?.toUpperCase() + agent.slice(1) : "", model()].filter(Boolean).join("\u00A0\u00B7\u00A0")
+    if (mobile()) return pendingLabel
+
+    return [pendingLabel, agent ? agent[0]?.toUpperCase() + agent.slice(1) : "", model()]
+      .filter(Boolean)
+      .join("\u00A0\u00B7\u00A0")
   })
 
   const stamp = createMemo(() => timefmt().format(props.message.time.created))
@@ -292,6 +314,15 @@ export function CurrentUserMessageDisplay(props: {
     }
   }
 
+  const updatePending = async (action: "queue" | "remove") => {
+    const actions = props.actions?.pending
+
+    if (!actions || state.updating) return
+    setState("updating", true)
+    await actions[action]({ sessionID: props.sessionID, messageID: props.message.id })
+    setState("updating", false)
+  }
+
   const renderAttachments = () => (
     <Show when={attachments().length > 0 || references().length > 0}>
       <div data-slot="user-message-attachments">
@@ -302,11 +333,16 @@ export function CurrentUserMessageDisplay(props: {
             </AttachmentCard>
           )}
         </For>
-        <For each={attachments()}>
+        <Index each={attachments()}>
           {(file) => {
-            const url = () => (file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`)
-            const name = () => file.name ?? i18n.t("ui.message.attachment.alt")
-            const image = () => file.mime.startsWith("image/")
+            const url = () => {
+              const source = file().source
+
+              return source.type === "uri" ? source.uri : `data:${file().mime};base64,${file().data}`
+            }
+
+            const name = () => file().name ?? i18n.t("ui.message.attachment.alt")
+            const image = () => file().mime.startsWith("image/")
 
             return (
               <Show
@@ -326,20 +362,25 @@ export function CurrentUserMessageDisplay(props: {
                   title={getFilename(name())}
                   hover={name()}
                   clickable={!!props.actions?.openAttachment}
-                  onClick={() => props.actions?.openAttachment?.(file)}
+                  onClick={() => props.actions?.openAttachment?.(file())}
                 >
-                  {typeLabel(name(), file.mime, i18n.t("ui.common.file"))}
+                  {typeLabel(name(), file().mime, i18n.t("ui.common.file"))}
                 </AttachmentCard>
               </Show>
             )
           }}
-        </For>
+        </Index>
       </div>
     </Show>
   )
 
   return (
-    <div data-component="user-message" data-timeline-part-id={props.text ? `${props.message.id}:text:0` : undefined}>
+    <div
+      data-component="user-message"
+      data-pending={waiting() ? "true" : undefined}
+      data-timeline-part-id={props.text ? `${props.message.id}:text:0` : undefined}
+    >
+      {renderAttachments()}
       <Show
         when={props.text}
         fallback={
@@ -357,8 +398,8 @@ export function CurrentUserMessageDisplay(props: {
           </div>
         </div>
       </Show>
-      {renderAttachments()}
-      <Show when={props.text || comments().length > 0}>
+      {/* Like the TUI, a pending steer of only attachments still offers its actions. */}
+      <Show when={props.text || comments().length > 0 || pending()}>
         <div data-slot="user-message-copy-wrapper">
           <span data-slot="user-message-meta-wrap">
             <Show when={metaHead()}>
@@ -375,7 +416,31 @@ export function CurrentUserMessageDisplay(props: {
               {stamp()}
             </span>
           </span>
-          <Show when={props.actions?.revert}>
+          <Show when={pending()}>
+            <MessageActionButton
+              icon="arrow-down-to-line"
+              label={i18n.t("ui.message.moveToQueue")}
+              disabled={state.updating}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation()
+                void updatePending("queue")
+              }}
+              aria-label={i18n.t("ui.message.moveToQueue")}
+            />
+            <MessageActionButton
+              icon="outline-trash"
+              label={i18n.t("ui.message.deletePending")}
+              disabled={state.updating}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation()
+                void updatePending("remove")
+              }}
+              aria-label={i18n.t("ui.message.deletePending")}
+            />
+          </Show>
+          <Show when={props.actions?.revert && !pending()}>
             <MessageActionButton
               icon="reset"
               label={i18n.t("ui.message.revertMessage")}
@@ -452,6 +517,25 @@ function CurrentHighlightedText(props: {
 
 type HighlightSegment = { text: string; type?: "file" | "agent" }
 
+/** A compaction the server admitted but has not started, drawn as the divider a started one opens with. */
+export function SessionCompactionQueued() {
+  const i18n = useI18n()
+
+  return (
+    <div data-component="session-compaction-message">
+      <CompactionDivider label={i18n.t("ui.messagePart.compaction.queued")} />
+    </div>
+  )
+}
+
+function CompactionDivider(props: { label: string }) {
+  return (
+    <div class="py-2">
+      <TimelineSeparator label={props.label} />
+    </div>
+  )
+}
+
 export function SessionCompactionMessage(props: { message: SessionMessageCompaction; error: string }) {
   const i18n = useI18n()
   const summary = () => (props.message.status === "failed" ? "" : props.message.summary)
@@ -500,9 +584,7 @@ export function SessionCompactionMessage(props: { message: SessionMessageCompact
 
   return (
     <div data-component="session-compaction-message">
-      <div class="py-2">
-        <TimelineSeparator label={i18n.t("ui.messagePart.compaction.started")} />
-      </div>
+      <CompactionDivider label={i18n.t("ui.messagePart.compaction.started")} />
       <Show when={summary().trim()}>
         <div data-component="text-part" data-timeline-part-id={props.message.id}>
           <div data-slot="text-part-body">
@@ -581,12 +663,14 @@ export function AssistantTextContent(props: {
     })
   })
 
+  // Mobile omits the per-response agent and model; see CurrentUserMessageDisplay.
+  const mobile = createMediaQuery("(max-width: 767px)")
+
   const meta = createMemo(() => {
     const agent = props.message.agent
 
     return [
-      agent ? agent[0]?.toUpperCase() + agent.slice(1) : "",
-      model(),
+      ...(mobile() ? [] : [agent ? agent[0]?.toUpperCase() + agent.slice(1) : "", model()]),
       duration(),
       interrupted() ? i18n.t("ui.message.interrupted") : "",
     ]
@@ -606,11 +690,7 @@ export function AssistantTextContent(props: {
     <Show when={props.text}>
       <div data-component="text-part" data-timeline-part-id={props.id}>
         <div data-slot="text-part-body">
-          <PacedMarkdown
-            text={props.text}
-            cacheKey={props.id}
-            streaming={props.message.time.completed === undefined}
-          />
+          <PacedMarkdown text={props.text} cacheKey={props.id} streaming={props.message.time.completed === undefined} />
         </div>
         <Show when={props.showCopy}>
           <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>

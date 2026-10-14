@@ -13,7 +13,7 @@ flowchart LR
   end
   subgraph window["Each window (desktop or web)"]
     wh["window host<br/>packages/app/src/runtime/extension"] --> we["renderer.tsx entries"]
-    we -- "ctx.add(Point, item)" --> wh
+    we -- "ctx.add(Registry, item)" --> wh
     we -- "Contract (in process)" --> other["other extensions"]
   end
   me -- "Ipc: methods, state, events<br/>(schemas over the bridge)" --> we
@@ -24,7 +24,7 @@ flowchart LR
 ```text
 src/pairing/
 ├── index.ts          Extension.define: id, provides, uses, requires, stores, i18n
-├── contract.ts       tokens other code may import: Ipc, Contract, Point
+├── contract.ts       tokens other code may import: Ipc, Contract, Registry
 ├── renderer.tsx      window entry, default export Setup<typeof definition>
 ├── main.ts           main entry, default export MainSetup<typeof definition> (desktop only)
 ├── page.tsx          heavy UI, loaded with lazy()
@@ -54,20 +54,20 @@ Unit tests of logic that carries a contract sit beside the code as `*.test.ts`, 
 
 Setup receives one context. Components read the same object with `useExtension<typeof definition>()`.
 
-| Member                | Window                                                                                      | Main                                   |
-| --------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Host APIs             | `ctx.layout`, `ctx.sessions`, `ctx.storage`, `ctx.desktop`, … (see the [catalog](#catalog)) | `ctx.storage`, `ctx.windows`, …        |
-| Optional dependencies | `ctx.uses.name`: `Accessor<Live<T>>`, `provides` included                                   |                                        |
-| Hard dependencies     | `ctx.requires.name`: `T`                                                                    |                                        |
-| Declared stores       | `ctx.stores.name`: `Persisted`, or `(session) => Persisted`                                 | `ctx.stores.name`: `Persisted`, loaded |
-| Contribute to a point | `ctx.add(Point, item)`                                                                      | `ctx.add(MenubarItem, item)`           |
-| Provide a dependency  | `ctx.provide(Contract, impl)`                                                               | `ctx.provide(Ipc, impl)`               |
-| Lifetime              | Solid's `onCleanup` and `ctx.signal`                                                        | `ctx.scope` (`signal`, `addFinalizer`) |
-| Copy                  | `ctx.t(key, params)`, `ctx.plural(key, count)`                                              | the same                               |
+| Member                   | Window                                                                                      | Main                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Host APIs                | `ctx.layout`, `ctx.sessions`, `ctx.storage`, `ctx.desktop`, … (see the [catalog](#catalog)) | `ctx.storage`, `ctx.windows`, …        |
+| Optional dependencies    | `ctx.uses.name`: `Accessor<Live<T>>`, `provides` included                                   |                                        |
+| Hard dependencies        | `ctx.requires.name`: `T`                                                                    |                                        |
+| Declared stores          | `ctx.stores.name`: `Persisted`, or `(session) => Persisted`                                 | `ctx.stores.name`: `Persisted`, loaded |
+| Contribute to a registry | `ctx.add(Registry, item)`                                                                   | `ctx.add(MenubarItem, item)`           |
+| Provide a dependency     | `ctx.provide(Contract, impl)`                                                               | `ctx.provide(Ipc, impl)`               |
+| Lifetime                 | Solid's `onCleanup` and `ctx.signal`                                                        | `ctx.scope` (`signal`, `addFinalizer`) |
+| Copy                     | `ctx.t(key, params)`, `ctx.plural(key, count)`                                              | the same                               |
 
 - Host APIs are getters: an API you never read costs nothing.
 - No host API throws before the app interface mounts: reads return their documented defaults (`ctx.layout.ready()` is false), and writes such as `ctx.layout.open` wait, then apply in call order. A dialog `ctx.dialogs.open` opens meanwhile shows after the interface's first render.
-- Points and contracts are tokens: `ctx.add(Command, …)`, `ctx.provide(FileTree, …)`.
+- Registries and contracts are tokens: `ctx.add(Command, …)`, `ctx.provide(FileTree, …)`.
 - Reading a token you did not declare is a compile error. A key that names one token in `provides` and another in `uses` is one too.
 - Bind each contract component with `bindExtension` during the provider's setup so `useExtension` reads the provider's context, not the consumer's. Props retain their getters. Leave data methods such as `Changes.diffs()` unwrapped.
 
@@ -163,7 +163,7 @@ ctx.add(Command, {
 | ------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | `Extension.define(definition)`                   | The manifest, typed so `Setup<typeof definition>` sees the declarations             |
 | `Extension.compose(...definitions)`              | A process's list; rejects repeated extension ids and missing or duplicate providers |
-| `Point.define<T>(id)`                            | A place your extension renders and others contribute to                             |
+| `Registry.define<T>(id)`                         | A list your extension owns and others contribute to                                 |
 | `Contract.define<T, Id>(id)`                     | An in-process API one extension provides to others                                  |
 | `Ipc.define(spec)` / `Ipc.ref<typeof T>(id)`     | The main ↔ window contract, or a reference to it that loads no schemas             |
 | `Store.global` / `Store.session` / `Store.main`  | Declared window state the host loads before you read it, and main state             |
@@ -186,14 +186,22 @@ const Page = lazy(() => import("./page"))
 onCleanup(onIdle(() => void Page.preload()))
 ```
 
-Pairing's shipping page uses a query, not `createLatest`. It passes the query's abort signal directly to the no-input Ipc method; options are the only argument:
+Pairing's shipping page uses a query, not `createLatest`. It passes the query's abort signal directly to the no-input Ipc method; options are the only argument. The generation in the key asks again when main comes back:
 
-<!-- source: src/pairing/page.tsx#local -->
+<!-- source: src/pairing/page.tsx#screenActive -->
 
 ```tsx
-const local = useQuery(() => ({
-  queryKey: [ctx.id, "local"],
-  queryFn: (input) => props.client.info({ signal: input.signal }),
+const screenActive = useQuery(() => ({
+  queryKey: [ctx.id, "screen-active", main()?.generation],
+  queryFn: (input) => {
+    const live = main()
+
+    if (!live) throw new Error("Pairing's main side is not active")
+
+    return live.value.screenActive({ signal: input.signal })
+  },
+  enabled: !!main(),
+  gcTime: 0,
 }))
 ```
 
@@ -203,20 +211,20 @@ Each line links to the file whose TSDoc covers every field.
 
 SDK icon fields use `IconName` from `@opencode/ui/icons/catalog`, a dependency-free module with no Solid or CSS imports. The UI renderer reads that same catalog: there is no copied name list or dependency on a UI component's props, and no artwork in the general-purpose util package.
 
-### Points
+### Registries
 
-| Point                               | Process | What an item is                                                                             |
-| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| [`Command`](src/sdk/points.ts)      | window  | A palette command with an optional keybind and slash command                                |
-| [`MenuItem`](src/sdk/points.ts)     | window  | An item of a host menu: the side panel + menu, Add server, a server row                     |
-| [`Panel`](src/sdk/points.ts)        | window  | Tabs in the session's side region, or the dock                                              |
-| [`SettingsPage`](src/sdk/points.ts) | window  | A settings page, a section on a host page, or rows in a host section                        |
-| [`Server`](src/sdk/points.ts)       | window  | A source of servers, such as SSH hosts                                                      |
-| [`LinkHandler`](src/sdk/points.ts)  | window  | Opens local links, such as file paths in messages                                           |
-| [`TitlebarItem`](src/sdk/points.ts) | window  | A titlebar pill, or the dev channel badge as a toggle                                       |
-| [`Slot`](src/sdk/points.ts)         | window  | Content for `window.bottom`, `session.header`, `session.panel.end`, `session.panel.sidebar` |
-| [`Style`](src/sdk/points.ts)        | window  | CSS imported with `?inline`                                                                 |
-| [`MenubarItem`](src/sdk/main.ts)    | main    | An item of the native app menu                                                              |
+| Registry                                | Process | What an item is                                                                             |
+| --------------------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| [`Command`](src/sdk/registries.ts)      | window  | A palette command with an optional keybind and slash command                                |
+| [`MenuItem`](src/sdk/registries.ts)     | window  | An item of a host menu: the side panel + menu, Add server, a server row                     |
+| [`Panel`](src/sdk/registries.ts)        | window  | Tabs in the session's side region, or the dock                                              |
+| [`SettingsPage`](src/sdk/registries.ts) | window  | A settings page, a section on a host page, or rows in a host section                        |
+| [`Server`](src/sdk/registries.ts)       | window  | A source of servers, such as SSH hosts                                                      |
+| [`LinkHandler`](src/sdk/registries.ts)  | window  | Opens local links, such as file paths in messages, and says whether their target exists     |
+| [`TitlebarItem`](src/sdk/registries.ts) | window  | A titlebar pill, or the dev channel badge as a toggle                                       |
+| [`Slot`](src/sdk/registries.ts)         | window  | Content for `window.bottom`, `session.header`, `session.panel.end`, `session.panel.sidebar` |
+| [`Style`](src/sdk/registries.ts)        | window  | CSS imported with `?inline`                                                                 |
+| [`MenubarItem`](src/sdk/main.ts)        | main    | An item of the native app menu                                                              |
 
 ### Host APIs
 
@@ -229,14 +237,14 @@ SDK icon fields use `IconName` from `@opencode/ui/icons/catalog`, a dependency-f
 | `ctx.system`                 | `System`                                                       | Clipboard, saving files, `openExternal`                           |
 | `ctx.desktop`                | `Desktop \| undefined`                                         | Desktop-only: reveal, launch, installed, zoom, forceFocus         |
 | `ctx.dialogs`                | `Dialogs`                                                      | `open` returns a handle to close; a dialog closes with its owner  |
-| `ctx.links`                  | `Links`                                                        | Routes a local link to the best `LinkHandler`                     |
+| `ctx.links`                  | `Links`                                                        | Opens a local link, or checks it exists, with the best handler    |
 | `ctx.embeds`                 | `Embeds`                                                       | Shows a web page the main entry created                           |
 | `ctx.build`                  | `Build`                                                        | Version, channel, platform, packaged                              |
 | `ctx.locale`                 | `Locale`                                                       | Locale and writing direction                                      |
 | `ctx.appearance`             | `Appearance`                                                   | The user's mono font                                              |
 | `ctx.router`                 | `Router`                                                       | The route path, and whether it is changing                        |
 | `ctx.keybinds`               | `Keybinds`                                                     | Display and matching of command keybinds                          |
-| `ctx.servers`                | `Servers`                                                      | Ids of the servers the app lists                                  |
+| `ctx.servers`                | `Servers`                                                      | The servers the app lists, and each one's live `ServerRef`        |
 | `ctx.workspaces`             | `Workspaces`                                                   | `on("remove", …)` when a workspace is removed                     |
 | `ctx.scope` (main)           | `Scope`                                                        | The instance's lifetime                                           |
 | `ctx.storage` (main)         | `Storage`                                                      | Synchronous storage, the same `Persisted` shape                   |
@@ -268,7 +276,7 @@ sequenceDiagram
   M-->>W: emit("check", null, window): the app menu asks this window to check
 ```
 
-- Define it in `contract.ts`. Its id is your extension id, or `<id>.<name>`. A method without an input schema takes only optional call options: `pairing.info({ signal })`, never an `undefined` placeholder.
+- Define it in `contract.ts`. Its id is your extension id, or `<id>.<name>`. A method without an input schema takes only optional call options: `pairing.screenActive({ signal })`, never an `undefined` placeholder.
 - Your own Ipc goes in `provides` only: the main entry provides it, and the window entry reads it as `ctx.uses.name`. Another extension's Ipc goes in `uses`.
 - On the web there is no main process: the Ipc is always `inactive`.
 - `IpcsProvided<typeof renderer, typeof main>` fails to compile when a window provides, uses or requires an Ipc that no main entry provides. [`src/builtins.typecheck.ts`](src/builtins.typecheck.ts) checks the built-ins.
@@ -320,20 +328,16 @@ const act = (name: "check" | "install") => {
 }
 ```
 
-The pairing settings page renders only while its main side is up, so it never offers a control that cannot answer:
+The pairing settings page waits for its main side only where it needs it. Pairing codes come from the local server's `ServerRef`, so they never wait for main; remote access and the display setting render only while main is active, so the page never offers a switch that cannot answer:
 
-<!-- source: src/pairing/page.tsx#PairingPage -->
+<!-- source: src/pairing/page.tsx#main -->
 
 ```tsx
-// The page shows nothing until the main side is up, and again while it is away.
-export default function PairingPage(props: { pairing: Accessor<Live<Client>> }) {
-  const client = () => {
-    const live = props.pairing()
+// Remote access and the display setting need pairing's main side; codes come from the server, so they never wait.
+const main = () => {
+  const live = props.pairing()
 
-    return live.status === "active" ? live.value : undefined
-  }
-
-  return <Show when={client()}>{(client) => <SettingsPairing client={client()} />}</Show>
+  return live.status === "active" ? live : undefined
 }
 ```
 
@@ -425,7 +429,7 @@ legacy: ["summary"],
 | Gate                       | Where                                                                                                            | Catches                                                                                                                                     |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Composition compile checks | [`sdk/compose.typecheck.ts`](src/sdk/compose.typecheck.ts), [`builtins.typecheck.ts`](src/builtins.typecheck.ts) | Duplicate extension ids, missing or duplicate providers, wrong-process stores, readonly drafts, panel and slot inputs, no-input Ipc options |
-| Point compile checks       | [`sdk/points.typecheck.ts`](src/sdk/points.typecheck.ts)                                                         | A `MenuItem` field its menu ignores                                                                                                         |
+| Registry compile checks    | [`sdk/registries.typecheck.ts`](src/sdk/registries.typecheck.ts)                                                 | A `MenuItem` field its menu ignores                                                                                                         |
 | Graph matrix               | `packages/app/component-tests/extension-graph.spec.ts`                                                           | A `requires` cycle; a consumer that fails when one optional provider is disabled                                                            |
 | Keeper suites              | `packages/app/e2e/regression/`                                                                                   | What the user sees, per product area                                                                                                        |
 | Unit tests                 | `*.test.ts` beside the code                                                                                      | Pure logic with a contract: paths, migrations, protocols                                                                                    |
@@ -437,9 +441,9 @@ legacy: ["summary"],
 
 ## Build your first extension
 
-Pairing shows another device how to reach this machine's server, and keeps the display awake. It is small and uses both processes: a main entry that owns a power-save blocker and the server's credentials, and a window entry that adds a settings page and a command. Each block below is its shipping source.
+Pairing connects another device to this machine's server from anywhere, and keeps the display awake. It is small and uses both processes: a main entry that turns on remote access through the CLI and owns a power-save blocker, and a window entry that adds a settings page and a command. The window asks the local server for its remote address and pairing codes through `ctx.servers`: that server's `ServerRef` is already authenticated in the window, so its credentials never leave main. Each block below is its shipping source.
 
-1. **Define the contract.** `contract.ts` holds the tokens other code may import, here the Ipc between pairing's main and window entries. The schemas type both sides and encode every value.
+1. **Define the contract.** `contract.ts` holds the tokens other code may import, here the Ipc between pairing's main and window entries. It carries only what needs the main process: remote access, a setting of the background service, and the display sleep blocker. The schemas type both sides and encode every value.
 
 <!-- source: src/pairing/contract.ts -->
 
@@ -447,17 +451,24 @@ Pairing shows another device how to reach this machine's server, and keeps the d
 import { Schema } from "effect"
 import { Ipc } from "../sdk"
 
-export const PairingInfo = Schema.Struct({ urls: Schema.Array(Schema.String) })
-
-/** Pairs other devices with this machine's local server and keeps its display awake. */
+/**
+ * Turns on remote access and keeps this machine's display awake while another device uses it. The window asks the
+ * local server for its remote address and pairing codes through its own `ServerRef`; remote access, which changes
+ * the background service's settings through the CLI, and the display sleep blocker need the main process.
+ */
 export const Pairing = Ipc.define({
   id: "pairing",
   methods: {
-    /** The local server's advertised URLs. */
-    info: { output: PairingInfo },
-    /** A single-use code for an `/auth/connect/:code` link. */
-    code: { output: Schema.String },
+    /** Whether remote access is on: the background service serves an OpenTunnel address. */
+    remote: { output: Schema.Boolean },
+    /**
+     * Turns remote access on or off, then starts the background service again. Turning it on the first time creates
+     * the tunnel, which can take a minute.
+     */
+    setRemote: { input: Schema.Boolean },
+    /** Whether main holds the display sleep blocker. */
     screenActive: { output: Schema.Boolean },
+    /** Holds or releases the display sleep blocker, and remembers the choice. */
     setScreenActive: { input: Schema.Boolean },
   },
 })
@@ -484,11 +495,12 @@ export default Extension.define({
 })
 ```
 
-3. **Provide it from main.** `MainSetup<typeof definition>` types `ctx.stores`, which main reads synchronously. A finalizer releases the blocker when the instance goes away, and the sidecar's credentials never leave main.
+3. **Provide it from main.** `MainSetup<typeof definition>` types `ctx.stores`, which main reads synchronously. Remote access runs `opencode service` through `ctx.cli`, with the caller's signal for a read and `ctx.scope.signal` for a change a closing window must not cancel. A finalizer releases the blocker when the instance goes away.
 
 <!-- source: src/pairing/main.ts -->
 
 ```ts
+import { execFile } from "node:child_process"
 import { powerSaveBlocker } from "electron"
 import type { MainSetup } from "../sdk/main"
 import { Pairing } from "./contract"
@@ -497,9 +509,15 @@ import type definition from "./index"
 /** The display sleep blocker this instance holds, if any. */
 type Blocker = { id?: number }
 
+/** The last `opencode service` command; the next one starts after it settles. */
+type Queue = { tail: Promise<unknown> }
+
 const setup: MainSetup<typeof definition> = (ctx) => {
   const stored = ctx.stores.keepScreenActive
+  const cli = ctx.cli
+  const log = ctx.log
   const blocker: Blocker = {}
+  const queue: Queue = { tail: Promise.resolve() }
 
   const release = () => {
     if (blocker.id === undefined) return
@@ -514,21 +532,41 @@ const setup: MainSetup<typeof definition> = (ctx) => {
     stored.set(enabled)
   }
 
+  // Remote access is a setting of the background service, so it changes through the CLI the app runs, as with
+  // `opencode pair --remote`. A change restarts the service, so commands run one at a time.
+  const service = (args: readonly string[], signal: AbortSignal) => {
+    const run = queue.tail.then(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          execFile(
+            cli.command[0] ?? "opencode",
+            [...cli.command.slice(1), "service", ...args],
+            { signal, windowsHide: true },
+            (error, stdout, stderr) => {
+              if (!error) return resolve(stdout.trim())
+              log.write("error", "pairing service command failed", { args, error: error.message, stderr })
+              reject(error)
+            },
+          )
+        }),
+    )
+
+    queue.tail = run.catch(() => undefined)
+
+    return run
+  }
+
   if (stored.value) keepScreenActive(true)
   ctx.scope.addFinalizer(release)
 
-  const client = async () => {
-    const server = ctx.serverEndpoints.get("sidecar")
-
-    if (!server) throw new Error("The local desktop server is not ready")
-    const { OpenCode } = await import("@opencode/client/promise")
-
-    return OpenCode.make({ baseUrl: server.url, headers: server.headers })
-  }
-
   ctx.provide(Pairing, {
-    info: async () => ({ urls: (await (await client()).server.info()).urls }),
-    code: async () => (await (await client()).server.pair()).code,
+    remote: async (_, caller) => (await service(["get", "remote"], caller.signal)) === "true",
+    // Changing the setting stops the service. Starting it here brings it back, with the tunnel when remote access is
+    // on. A window that closes meanwhile does not cancel the change.
+    setRemote: async (enabled) => {
+      await service(["set", "remote", String(enabled)], ctx.scope.signal)
+      await service(["start"], ctx.scope.signal)
+    },
     screenActive: () => blocker.id !== undefined && powerSaveBlocker.isStarted(blocker.id),
     setScreenActive: (enabled) => keepScreenActive(enabled),
   })
@@ -537,7 +575,7 @@ const setup: MainSetup<typeof definition> = (ctx) => {
 export default setup
 ```
 
-4. **Write the window entry.** Pairing exists only on desktop, so setup returns at once on the web. The settings page is heavy, so it loads behind `lazy()` and compiles while the app idles; its search entries are indexed without mounting it. The page receives `ctx.uses.pairing` and renders nothing until main answers (see `PairingPage` under [Live and failure handling](#live-and-failure-handling)).
+4. **Write the window entry.** Pairing exists only on desktop, so setup returns at once on the web. The settings page is heavy, so it loads behind `lazy()` and compiles while the app idles; its search entries are indexed without mounting it. The page receives the desktop's own server, found through `ctx.servers` by `builtin`, and `ctx.uses.pairing`. The search entries for remote access and the display setting, like the settings themselves, exist only while main answers (see `main` under [Live and failure handling](#live-and-failure-handling)).
 
 <!-- source: src/pairing/renderer.tsx -->
 
@@ -549,9 +587,18 @@ import type definition from "./index"
 const setup: Setup<typeof definition> = (ctx) => {
   if (!ctx.desktop) return
   const layout = ctx.layout
+  const servers = ctx.servers
+  const pairing = ctx.uses.pairing
   const Page = lazy(() => import("./page"))
   // Settings rows are small; load them while idle so settings opens without a blank row.
   onCleanup(onIdle(() => void Page.preload()))
+
+  // The desktop's own server. Its ref is already authenticated in this window, so codes need no main process.
+  const local = () =>
+    servers
+      .list()
+      .map((id) => servers.get(id))
+      .find((server) => server?.builtin)
 
   ctx.add(SettingsPage, {
     id: "pairing",
@@ -561,8 +608,19 @@ const setup: Setup<typeof definition> = (ctx) => {
       return ctx.t("title")
     },
     get entries() {
+      const pairingEntry = { id: "pairing", title: ctx.t("title"), keywords: "pair device qr phone remote" }
+
+      // Remote access and the display setting exist only while pairing's main side answers.
+      if (pairing().status !== "active") return [pairingEntry]
+
       return [
-        { id: "pairing", title: ctx.t("title"), keywords: "pair device qr local" },
+        pairingEntry,
+        {
+          id: "settings-remote-access",
+          title: ctx.t("remote.title"),
+          description: ctx.t("remote.description"),
+          keywords: "internet tunnel opentunnel",
+        },
         {
           id: "settings-keep-screen-active",
           title: ctx.t("screenActive.title"),
@@ -573,7 +631,7 @@ const setup: Setup<typeof definition> = (ctx) => {
     },
     render: () => (
       <Suspense>
-        <Page pairing={ctx.uses.pairing} />
+        <Page server={local} pairing={pairing} />
       </Suspense>
     ),
   })
@@ -615,6 +673,7 @@ export const builtins = Extension.compose(
   { ...updater, main: () => import("./updater/main") },
   { ...ssh, main: () => import("./ssh/main") },
   { ...wsl, main: () => import("./wsl/main") },
+  microsoftOffice,
 )
 ```
 
@@ -640,6 +699,7 @@ export const builtins = Extension.compose(
   { ...updater, renderer: eager(updaterRenderer) },
   { ...ssh, renderer: eager(sshRenderer) },
   { ...wsl, renderer: eager(wslRenderer) },
+  { ...microsoftOffice, renderer: eager(microsoftOfficeRenderer) },
 )
 ```
 
@@ -655,7 +715,7 @@ Your own extension takes the same steps:
 
 1. **Pick the id.** It prefixes your commands, panel keys, stored keys and Ipc ids. A later rename needs the migrations under [Stored state](#stored-state).
 2. **Define it.** Create `src/<id>/index.ts` with `Extension.define({ id, i18n: { en } })`, and `src/<id>/i18n/en.ts` with your copy.
-3. **Declare the tokens.** Put any token another extension or your main entry needs in `contract.ts`: a `Contract`, a `Point` or an `Ipc`. Your own tokens go in `provides`. What others provide goes in `uses`, or in `requires` only if the extension is meaningless without it.
+3. **Declare the tokens.** Put any token another extension or your main entry needs in `contract.ts`: a `Contract`, a `Registry` or an `Ipc`. Your own tokens go in `provides`. What others provide goes in `uses`, or in `requires` only if the extension is meaningless without it.
 4. **Write the window entry.** In `renderer.tsx`, a `Setup<typeof definition>` contributes with `ctx.add`, branches each action on `ctx.uses.<name>()`, runs side work in `createKeyed`, and keeps heavy UI behind `lazy()` with an `onIdle` preload.
 5. **Write the main entry, if you need Node or Electron.** In `main.ts`, a `MainSetup<typeof definition>` provides your Ipc with `ctx.provide` and tears down with `ctx.scope.addFinalizer`.
 6. **Declare your state.** Use `Store.global`, `Store.session` or `Store.main`, with a `from` for every older home of the value.

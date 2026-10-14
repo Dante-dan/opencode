@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { ConfigProvider, Effect, Layer, Logger, Ref, Schema, Stream } from "effect"
-import { Headers, HttpClientRequest } from "effect/unstable/http"
+import { Headers, HttpClientRequest } from "effect/http"
 import {
   Media,
   LLM,
@@ -325,11 +325,13 @@ describe("OpenAI Responses route", () => {
     }),
   )
 
-  it.effect("passes through provider-defined service tiers", () =>
+  it.effect("passes through provider-defined and future service tiers", () =>
     Effect.gen(function* () {
-      const prepared = yield* compileRequest(LLMRequest.update(request, { providerOptions: { serviceTier: "scale" } }))
+      for (const serviceTier of ["scale", "ultrafast", "future-tier"]) {
+        const prepared = yield* compileRequest(LLMRequest.update(request, { providerOptions: { serviceTier } }))
 
-      expect(prepared.body.service_tier).toBe("scale")
+        expect(prepared.body.service_tier).toBe(serviceTier)
+      }
     }),
   )
 
@@ -2115,6 +2117,24 @@ describe("OpenAI Responses route", () => {
     }),
   )
 
+  it.effect("omits the prompt cache key when compatibility disables it", () =>
+    Effect.gen(function* () {
+      const prepared = yield* compileRequest(
+        LLM.request({
+          model: LanguageModel.update(model, { compatibility: { supportsPromptCacheKey: false } }),
+          prompt: "Hello",
+          promptCacheKey: "request_cache",
+        }),
+      )
+
+      expect(prepared.body).not.toHaveProperty("prompt_cache_key")
+      expect(model.compatibility?.supportsPromptCacheKey).toBeUndefined()
+      expect(
+        (yield* compileRequest(LLM.request({ model, prompt: "Hello", promptCacheKey: "request_cache" }))).body,
+      ).toHaveProperty("prompt_cache_key", "request_cache")
+    }),
+  )
+
   it.effect("parses text and usage stream fixtures", () =>
     Effect.gen(function* () {
       const body = sseEvents(
@@ -3895,7 +3915,6 @@ describe("OpenAI Responses route", () => {
 
   it.effect("preserves foreign hosted images as portable image content when storage is enabled", () =>
     Effect.gen(function* () {
-      const item = { type: "image_generation_call", id: "ig_1", status: "completed", result: "AQID" }
       const prepared = yield* compileRequest(
         LLM.request({
           model: xaiModel,
@@ -4009,6 +4028,46 @@ describe("OpenAI Responses route", () => {
         ],
         store: false,
       })
+    }),
+  )
+
+  it.effect("drops empty reasoning items without summary or encrypted content", () =>
+    Effect.gen(function* () {
+      const prepared = yield* compileRequest(
+        LLM.request({
+          id: "req_reasoning_empty_shell",
+          model,
+          messages: [
+            Message.user("What changed?"),
+            Message.assistant([
+              {
+                type: "reasoning",
+                text: "",
+                providerMetadata: {
+                  openai: {
+                    itemId: "rs_6aa28a10c05cf9f566f44022:rs_01a08aeb51217b92a5b853a0cb5b20ca",
+                    reasoningEncryptedContent: null,
+                  },
+                },
+              },
+              { type: "text", text: "The parser changed." },
+            ]),
+            Message.user("Summarize it."),
+          ],
+          providerOptions: { store: false },
+        }),
+      )
+
+      expect(prepared.body.input).toEqual([
+        { type: "message", role: "user", content: [{ type: "input_text", text: "What changed?" }] },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "The parser changed." }],
+        },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Summarize it." }] },
+      ])
     }),
   )
 
@@ -4466,7 +4525,7 @@ describe("OpenAI Responses route", () => {
     }),
   )
 
-  it.effect("recovers authoritative incomplete final function arguments", () =>
+  it.effect("rejects authoritative incomplete final function arguments", () =>
     Effect.gen(function* () {
       const body = sseEvents(
         {
@@ -4492,17 +4551,17 @@ describe("OpenAI Responses route", () => {
         }),
       ).pipe(Effect.provide(fixedResponse(body)))
 
-      expect(response.events.find(LLMEvent.is.toolCall)).toMatchObject({
+      expect(response.toolCalls).toEqual([])
+      expect(response.events.find(LLMEvent.is.toolInputError)).toMatchObject({
         id: "call_1",
         name: "lookup",
-        input: { query: "partial" },
+        raw: '{"query":"partial',
       })
       expect(response.finishReason.normalized).toBe("tool-calls")
-      expect(response.events.some(LLMEvent.is.toolInputError)).toBeFalse()
     }),
   )
 
-  it.effect("recovers incomplete function arguments when output_item.added is absent", () =>
+  it.effect("rejects incomplete function arguments when output_item.added is absent", () =>
     Effect.gen(function* () {
       const body = sseEvents(
         {
@@ -4519,10 +4578,11 @@ describe("OpenAI Responses route", () => {
       )
       const response = yield* LLMClient.generate(request).pipe(Effect.provide(fixedResponse(body)))
 
-      expect(response.events.find(LLMEvent.is.toolCall)).toMatchObject({
+      expect(response.toolCalls).toEqual([])
+      expect(response.events.find(LLMEvent.is.toolInputError)).toMatchObject({
         id: "call_1",
         name: "lookup",
-        input: { query: "partial" },
+        raw: '{"query":"partial',
       })
       expect(response.finishReason.normalized).toBe("tool-calls")
     }),

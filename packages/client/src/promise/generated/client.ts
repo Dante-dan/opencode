@@ -121,6 +121,8 @@ import type {
   IntegrationWellknownAddOutput,
   IntegrationConnectKeyInput,
   IntegrationConnectKeyOutput,
+  IntegrationConnectExternalInput,
+  IntegrationConnectExternalOutput,
   IntegrationOauthConnectInput,
   IntegrationOauthConnectOutput,
   IntegrationOauthStatusInput,
@@ -156,6 +158,7 @@ import type {
   CredentialActivateOutput,
   CredentialRemoveInput,
   CredentialRemoveOutput,
+  ProjectListInput,
   ProjectListOutput,
   ProjectUpdateInput,
   ProjectUpdateOutput,
@@ -1228,6 +1231,19 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ),
+        external: (input: IntegrationConnectExternalInput, requestOptions?: RequestOptions) =>
+          request<IntegrationConnectExternalOutput>(
+            {
+              method: "POST",
+              path: `/api/integration/${encodeURIComponent(input.integrationID)}/connect/external`,
+              query: { location: input["location"] },
+              body: { methodID: input["methodID"], answer: input["answer"], label: input["label"] },
+              successStatus: 204,
+              declaredStatuses: [400, 401, 404],
+              empty: true,
+            },
+            requestOptions,
+          ),
       },
       oauth: {
         connect: (input: IntegrationOauthConnectInput, requestOptions?: RequestOptions) =>
@@ -1458,9 +1474,16 @@ export function make(options: ClientOptions) {
         ),
     },
     project: {
-      list: (requestOptions?: RequestOptions) =>
+      list: (input?: ProjectListInput, requestOptions?: RequestOptions) =>
         request<ProjectListOutput>(
-          { method: "GET", path: `/api/project`, successStatus: 200, declaredStatuses: [400, 401, 404], empty: false },
+          {
+            method: "GET",
+            path: `/api/project`,
+            query: { archived: input?.["archived"] },
+            successStatus: 200,
+            declaredStatuses: [400, 401, 404],
+            empty: false,
+          },
           requestOptions,
         ),
       update: (input: ProjectUpdateInput, requestOptions?: RequestOptions) =>
