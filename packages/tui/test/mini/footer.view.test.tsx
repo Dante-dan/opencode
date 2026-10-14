@@ -1712,7 +1712,7 @@ test("direct footer counts queued and steering work while running", async () => 
     const frame = app.captureCharFrame()
     const transparent = RGBA.fromValues(0, 0, 0, 0).toInts()
     const statusline = footerStatusline(app.renderer.root)
-    expect(frame).toContain("esc stop · ctrl+x q 2 pending · ↓ 1 subagent · ctrl+b background · Build")
+    expect(frame).toContain("esc stop · ctrl+x q 2 pending · ↓ 1 subagent · ctrl+x ctrl+b bg · Build")
     expect(frame).toMatch(/opencode · ctrl\+p menu *$/m)
     expect(frame).not.toContain("1 agent")
     expect(statusline.backgroundColor.toInts()).toEqual(transparent)
@@ -2007,7 +2007,7 @@ test("direct footer keeps compact work, model detail, and context ahead of cost 
     await app.renderOnce()
     const statusline = footerStatusline(app.renderer.root)
     expect(app.captureCharFrame().split("\n")[statusline.y].trimEnd()).toBe(
-      "\u25aa esc stop · ↓ 1 sub · ctrl+b bg · Plan · a-model-name-long-enough… · 16% ctx",
+      "\u25aa esc stop · ↓ 1 sub · ctrl+x ctrl+b bg · Plan · a-model-name-long-enough… · 16% ctx",
     )
   } finally {
     app.cleanup()
@@ -2137,7 +2137,7 @@ test("direct footer always offers backgrounding for a foreground subagent", asyn
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("↓ 1 subagent · ctrl+b background · Build · gpt-5 · ctrl+p menu")
+    expect(frame).toContain("↓ 1 subagent · ctrl+x ctrl+b background · Build · gpt-5 · ctrl+p menu")
     expect(frame).not.toContain("queued")
   } finally {
     app.cleanup()
