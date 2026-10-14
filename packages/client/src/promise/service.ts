@@ -73,7 +73,7 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
         const service = registration.service
         const decision = decide(service, options)
         if (decision._tag === "fail") {
-          if (service.state === "failed") await terminate(service.info, options, timing)
+          if (service.state === "failed") await terminate(service.info, options, timing).catch(() => undefined)
           throw decision.error
         }
         if (decision._tag === "reuse") {

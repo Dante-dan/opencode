@@ -91,7 +91,7 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
       pool.serviceAnswered()
       const decision = decide(service, options)
       if (decision._tag === "fail") {
-        if (service.state === "failed") yield* terminate(service.info, options, timing)
+        if (service.state === "failed") yield* terminate(service.info, options, timing).pipe(Effect.ignore)
         return yield* Effect.fail(decision.error)
       }
       if (decision._tag === "reuse") {
