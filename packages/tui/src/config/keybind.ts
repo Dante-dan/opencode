@@ -124,7 +124,7 @@ export const Definitions = {
   "session.share": keybind("none", "Share current session"),
   "session.unshare": keybind("none", "Unshare current session"),
   "session.interrupt": keybind("escape", "Interrupt current session"),
-  "session.background": keybind("ctrl+b", "Background blocking session tools"),
+  "session.background": keybind({ key: "ctrl+b", fallthrough: true }, "Background blocking session tools"),
   "session.compact": keybind("<leader>c", "Compact the session"),
   "session.aside": keybind("none", "Ask a side question"),
   "session.cd": keybind("none", "Change working directory"),
