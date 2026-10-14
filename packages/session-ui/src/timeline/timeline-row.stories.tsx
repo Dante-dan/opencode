@@ -65,7 +65,7 @@ function AgentReasoningStory(props: { mode: ReasoningMode; reasoning: string; to
               props.reasoning === "blank"
                 ? "   "
                 : "## Inspecting stability\n\nI will inspect the timeline before changing its state.",
-            time: { created: STORY_TIME + 100, ...(props.tool || props.text ? { completed: STORY_TIME + 7100 } : {}) },
+            time: { created: STORY_TIME + 100, completed: props.tool || props.text ? STORY_TIME + 7100 : undefined },
           },
         ]),
     ...(props.tool
@@ -81,6 +81,7 @@ function AgentReasoningStory(props: { mode: ReasoningMode; reasoning: string; to
       : []),
     ...(props.text ? [{ type: "text" as const, text: props.text }] : []),
   ] satisfies SessionMessageAssistant["content"]
+
   const document = {
     sessionID: CURRENT_SESSION_ID,
     messages: [
@@ -97,6 +98,7 @@ function AgentReasoningStory(props: { mode: ReasoningMode; reasoning: string; to
     status: { type: "busy" },
     diffs: [],
   } satisfies SessionDocument
+
   return (
     <section class="mx-auto w-full max-w-[720px] p-6">
       <CurrentSessionProviders document={document}>
@@ -116,9 +118,11 @@ const AgentReasoning = {
 
 function HiddenReasoningStory() {
   const [state, setState] = createStore({ phase: "thinking" })
+
   const document = createMemo(() => {
     const finished = state.phase === "idle"
     const running = state.phase === "running"
+
     return {
       sessionID: CURRENT_SESSION_ID,
       messages: [
@@ -147,19 +151,20 @@ function HiddenReasoningStory() {
                     time: {
                       created: STORY_TIME + 200,
                       ran: STORY_TIME + 250,
-                      ...(finished ? { completed: STORY_TIME + 300 } : {}),
+                      completed: finished ? STORY_TIME + 300 : undefined,
                     },
                   },
                 ]
               : []),
           ],
-          time: { created: STORY_TIME, ...(finished ? { completed: STORY_TIME + 400 } : {}) },
+          time: { created: STORY_TIME, completed: finished ? STORY_TIME + 400 : undefined },
         },
       ],
       status: { type: finished ? "idle" : "busy" },
       diffs: [],
     } satisfies SessionDocument
   })
+
   return (
     <section class="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-6">
       <div class="flex gap-3">
@@ -181,9 +186,11 @@ const WorkingWithoutReasoningDetails = { render: () => <HiddenReasoningStory /> 
 
 function RetryAndRecoverStory() {
   const [state, setState] = createStore({ phase: "thinking" })
+
   const document = createMemo(() => {
     const retry = state.phase === "retry"
     const finished = state.phase === "idle"
+
     return {
       sessionID: CURRENT_SESSION_ID,
       messages: [
@@ -194,22 +201,21 @@ function RetryAndRecoverStory() {
           agent: "build",
           model: STORY_MODEL,
           content: finished ? [{ type: "text" as const, text: "Recovered response" }] : [],
-          ...(retry
+          retry: retry
             ? {
-                retry: {
-                  attempt: 2,
-                  at: 1_900_000_000_000,
-                  error: { type: "ProviderRateLimitError", message: "Rate limit reached. Retrying with backoff." },
-                },
+                attempt: 2,
+                at: 1_900_000_000_000,
+                error: { type: "ProviderRateLimitError" as const, message: "Rate limit reached. Retrying with backoff." },
               }
-            : {}),
-          time: { created: STORY_TIME, ...(finished ? { completed: STORY_TIME + 300 } : {}) },
+            : undefined,
+          time: { created: STORY_TIME, completed: finished ? STORY_TIME + 300 : undefined },
         },
       ],
       status: { type: finished ? "idle" : "busy" },
       diffs: [],
     } satisfies SessionDocument
   })
+
   return (
     <section class="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-6">
       <div class="flex gap-3">
@@ -244,6 +250,7 @@ export const ProviderRetry = {
 }
 
 const noticeUser = { id: "msg_notice_user", type: "user", text: "Run it", time: { created: STORY_TIME } } as const
+
 const noticeAssistant = {
   id: "msg_notice_assistant",
   type: "assistant",
@@ -298,9 +305,11 @@ const AgentActivityNotices = {
 
 function CompactSessionStory() {
   const [state, setState] = createStore({ phase: "running", summary: "", second: false })
+
   const document = createMemo(() => {
     const failed = state.phase === "failed"
     const completed = state.phase === "completed"
+
     const message = {
       id: "msg_notice_compaction",
       type: "compaction" as const,
@@ -316,6 +325,7 @@ function CompactSessionStory() {
         : { summary: state.summary, recent: "" }),
       time: { created: STORY_TIME + 10 },
     }
+
     const cancelled = {
       id: "msg_notice_compaction_cancelled",
       type: "compaction" as const,
@@ -324,6 +334,7 @@ function CompactSessionStory() {
       error: { type: "aborted", message: "Cancellation detail should stay hidden." },
       time: { created: STORY_TIME + 20 },
     }
+
     return {
       sessionID: CURRENT_SESSION_ID,
       messages: [noticeUser, noticeAssistant, message, ...(state.second ? [cancelled] : [])],
@@ -331,6 +342,7 @@ function CompactSessionStory() {
       diffs: [],
     } satisfies SessionDocument
   })
+
   return (
     <section class="mx-auto flex w-full max-w-[760px] flex-col gap-4 p-6">
       <div class="flex flex-wrap gap-3">
@@ -521,7 +533,22 @@ const AliasedModelNotices = {
             id: "msg_story_fast_nano",
             type: "model-switched",
             model: { providerID: "company-gateway", id: "fast-nano", variant: "xhigh" },
+            previous: { providerID: "company-gateway", id: "long-context" },
             time: { created: 1_735_689_590_000 },
+          },
+          {
+            id: "msg_story_fast_nano_default",
+            type: "model-switched",
+            model: { providerID: "company-gateway", id: "fast-nano" },
+            previous: { providerID: "company-gateway", id: "fast-nano", variant: "xhigh" },
+            time: { created: 1_735_689_590_100 },
+          },
+          {
+            id: "msg_story_fast_nano_high",
+            type: "model-switched",
+            model: { providerID: "company-gateway", id: "fast-nano", variant: "high" },
+            previous: { providerID: "company-gateway", id: "fast-nano" },
+            time: { created: 1_735_689_590_200 },
           },
           {
             id: "msg_story_long_context",
@@ -597,6 +624,8 @@ export const Conversation = {
   },
   render: (args: { scenario: string; mode: ReasoningMode; reasoning: string; tool: boolean; text: string }) => {
     if (args.scenario === "reasoning") return <AgentReasoningStory {...args} />
+
+    // SAFETY: the scenario control only offers conversationScenarios keys, and "reasoning" returned above.
     return conversationScenarios[args.scenario as Exclude<keyof typeof conversationScenarios, "reasoning">].render()
   },
 }

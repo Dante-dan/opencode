@@ -12,6 +12,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { AzurePlugin } from "@opencode/core/plugin/provider/azure"
 import { OpenAIPlugin } from "@opencode/core/plugin/provider/openai"
+import { PromptCacheKeyPlugin } from "@opencode/core/plugin/provider/prompt-cache-key"
 import { XAIPlugin } from "@opencode/core/plugin/provider/xai"
 import { Provider } from "@opencode/core/provider"
 import { withEnv } from "../fixture/env"
@@ -72,6 +73,168 @@ describe("ConfigProviderPlugin.Plugin", () => {
         _tag: "SessionRunnerModel.UnsupportedCompactionError",
         message: "Provider compaction is not supported by custom/unsupported (openai-chat)",
       })
+    }),
+  )
+
+  it.effect("keeps provider and model compatibility precedence across config documents", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("proxy")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai/chat"
+        })
+        editor.models.update(providerID, Model.ID.make("catalog"), () => {})
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              proxy: {
+                // Model-version features are model-only and are not accepted on the provider.
+                compatibility: { requireFinishReason: false, supportsEffortUpdates: false },
+                models: { claude: { compatibility: { supportsPromptCacheKey: true } } },
+              },
+            },
+          }),
+        }),
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              proxy: {
+                compatibility: { supportsPromptCacheKey: false },
+                models: { alias: { modelID: "catalog" } },
+              },
+            },
+          }),
+        }),
+      ])
+
+      expect((yield* providers.get(providerID))?.compatibility).toEqual({
+        requireFinishReason: false,
+        supportsPromptCacheKey: false,
+      })
+      // A later provider default does not override an earlier model setting.
+      expect(required(yield* models.get(providerID, Model.ID.make("claude"))).compatibility).toEqual({
+        requireFinishReason: false,
+        supportsPromptCacheKey: true,
+      })
+      // A model first defined in a later document still inherits earlier provider values.
+      expect(required(yield* models.get(providerID, Model.ID.make("alias"))).compatibility).toEqual({
+        requireFinishReason: false,
+        supportsPromptCacheKey: false,
+      })
+    }),
+  )
+
+  it.effect("lets configured provider compatibility override built-in provider defaults", () =>
+    Effect.gen(function* () {
+      const plugin = yield* Plugin.Service
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("venice")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai-compatible"
+        })
+        editor.models.update(providerID, Model.ID.make("chat"), () => {})
+        editor.models.update(providerID, Model.ID.make("keyed"), () => {})
+      })
+      yield* PromptCacheKeyPlugin.effect(yield* PluginHost.make(plugin))
+      expect(required(yield* models.get(providerID, Model.ID.make("chat"))).compatibility).toEqual({
+        supportsPromptCacheKey: true,
+      })
+
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              venice: {
+                compatibility: { supportsPromptCacheKey: false },
+                models: { keyed: { compatibility: { supportsPromptCacheKey: true } } },
+              },
+            },
+          }),
+        }),
+      ])
+      expect(required(yield* models.get(providerID, Model.ID.make("chat"))).compatibility).toEqual({
+        supportsPromptCacheKey: false,
+      })
+      expect(required(yield* models.get(providerID, Model.ID.make("keyed"))).compatibility).toEqual({
+        supportsPromptCacheKey: true,
+      })
+    }),
+  )
+
+  it.effect("carries a configured provider cache format to the runtime model", () =>
+    Effect.gen(function* () {
+      const models = yield* Model.Service
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              litellm: {
+                package: "@opencode/ai/providers/openai-compatible",
+                settings: { baseURL: "https://litellm.test/v1" },
+                compatibility: { cacheFormat: "anthropic" },
+                models: { "claude-sonnet-5": {} },
+              },
+            },
+          }),
+        }),
+      ])
+
+      const model = required(yield* models.get(Provider.ID.make("litellm"), Model.ID.make("claude-sonnet-5")))
+      expect(model.compatibility).toEqual({ cacheFormat: "anthropic" })
+      expect((yield* ModelResolver.fromCatalogModel(model)).compatibility?.cacheFormat).toBe("anthropic")
+    }),
+  )
+
+  it.effect("applies provider compatibility to every provider model with model overrides", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("proxy")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai/chat"
+        })
+        editor.models.update(providerID, Model.ID.make("catalog"), (model) => {
+          model.compatibility = { maxTokensField: "max_tokens" }
+        })
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              proxy: {
+                compatibility: { supportsPromptCacheKey: false, requireFinishReason: false },
+                models: {
+                  configured: { compatibility: { supportsPromptCacheKey: true } },
+                },
+              },
+            },
+          }),
+        }),
+      ])
+
+      const catalog = required(yield* models.get(providerID, Model.ID.make("catalog")))
+      const configured = required(yield* models.get(providerID, Model.ID.make("configured")))
+      expect(catalog.compatibility).toEqual({
+        maxTokensField: "max_tokens",
+        supportsPromptCacheKey: false,
+        requireFinishReason: false,
+      })
+      expect(configured.compatibility).toEqual({ supportsPromptCacheKey: true, requireFinishReason: false })
+      // The OpenAI chat package enables the key by default; provider config overrides it on the runtime model.
+      expect((yield* ModelResolver.fromCatalogModel(catalog)).compatibility?.supportsPromptCacheKey).toBe(false)
+      expect((yield* ModelResolver.fromCatalogModel(configured)).compatibility?.supportsPromptCacheKey).toBe(true)
     }),
   )
 
@@ -255,6 +418,70 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  it.effect("merges partial config capabilities onto the base model's existing fields", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("custom")
+      const modelID = Model.ID.make("partial")
+      yield* providers.transform((editor) => {
+        editor.models.update(providerID, modelID, (model) => {
+          model.capabilities = { tools: false, input: ["text"], output: ["text"] }
+        })
+      })
+      const entries = [
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              custom: {
+                package: "aisdk:@ai-sdk/openai-compatible",
+                models: { partial: { capabilities: { input: ["text", "image"] } } },
+              },
+            },
+          }),
+        }),
+      ]
+
+      yield* addPlugin(entries)
+
+      expect((yield* models.get(providerID, modelID))?.capabilities).toEqual({
+        tools: false,
+        input: ["text", "image"],
+        output: ["text"],
+      })
+    }),
+  )
+
+  it.effect("resolves a config model with only input/output capabilities using default tools", () =>
+    Effect.gen(function* () {
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("custom")
+      const modelID = Model.ID.make("demo")
+      const entries = [
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              custom: {
+                package: "aisdk:@ai-sdk/openai-compatible",
+                models: { demo: { name: "Demo", capabilities: { input: ["text"], output: ["text"] } } },
+              },
+            },
+          }),
+        }),
+      ]
+
+      yield* addPlugin(entries)
+
+      expect((yield* models.get(providerID, modelID))?.capabilities).toEqual({
+        tools: true,
+        input: ["text"],
+        output: ["text"],
+      })
+    }),
+  )
+
   for (const scenario of [
     { name: "omitted capabilities", legacy: {}, overrides: {} },
     {
@@ -357,6 +584,21 @@ describe("ConfigProviderPlugin.Plugin", () => {
             variants: [{ id: "high", settings: { effort: "high" } }],
           },
         },
+      },
+    },
+    {
+      name: "built-in provider routes",
+      legacy: {
+        npm: "@opencode/ai/providers/google-vertex",
+        options: { project: "my-project", location: "europe-west4" },
+        models: {
+          chat: { provider: { npm: "@opencode-ai/ai/providers/google-vertex/mistral" } },
+        },
+      },
+      native: {
+        package: "@opencode/ai/providers/google-vertex",
+        settings: { project: "my-project", location: "europe-west4" },
+        models: { chat: { package: "@opencode/ai/providers/google-vertex/mistral" } },
       },
     },
     {
@@ -573,6 +815,8 @@ describe("ConfigProviderPlugin.Plugin", () => {
                         reasoningField: "vendor_reasoning",
                         maxTokensField: "max_completion_tokens",
                         requireFinishReason: false,
+                        supportsEffortUpdates: false,
+                        supportsThinkingBlockBinding: false,
                       },
                       capabilities: { tools: true, input: ["text"], output: ["text"] },
                       disabled: true,
@@ -671,6 +915,8 @@ describe("ConfigProviderPlugin.Plugin", () => {
           reasoningField: "vendor_reasoning",
           maxTokensField: "max_completion_tokens",
           requireFinishReason: false,
+          supportsEffortUpdates: false,
+          supportsThinkingBlockBinding: false,
         })
         expect(model.capabilities).toEqual({ tools: true, input: ["text"], output: ["text"] })
         expect(model.enabled).toBe(false)

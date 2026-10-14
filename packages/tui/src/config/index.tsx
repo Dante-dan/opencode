@@ -244,6 +244,9 @@ export const Info = Schema.Struct({
     description: "Experimental features that may change or be removed at any time",
   }),
   animations: Schema.optional(Schema.Boolean).annotate({ description: "Enable interface animations" }),
+  highlights: Schema.optional(Schema.Boolean).annotate({
+    description: "Show the release highlights once after OpenCode updates",
+  }),
   mouse: Schema.optional(Schema.Boolean).annotate({ description: "Enable terminal mouse capture" }),
   cursor: Schema.optional(Cursor),
 })
@@ -267,7 +270,6 @@ export type Resolved = Omit<Info, "attention" | "cursor" | "keybinds" | "leader"
   session: Omit<NonNullable<Info["session"]>, "new_location" | "permissions" | "tps"> & {
     new_location: "launch" | "inherit"
     permissions: "prompt" | "autoaccept"
-    terminal: boolean
     tps: boolean
   }
   tabs: {
@@ -320,8 +322,6 @@ export function resolve(
       ...input.session,
       new_location: input.session?.new_location ?? "launch",
       permissions: input.session?.permissions ?? "prompt",
-      // Persistent terminal panes need the opencode-pty daemon, which does not ship Windows binaries.
-      terminal: process.platform !== "win32",
       tps: input.session?.tps ?? true,
     },
     tabs: {

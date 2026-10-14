@@ -3,15 +3,18 @@ export * as ConfigProvider from "./provider.js"
 import { Schema } from "effect"
 import { Money } from "../money.js"
 import { Capabilities, Compatibility, Family, ID, VariantID } from "../model.js"
+import { ProviderCompatibility } from "../model-compatibility.js"
 import { Provider } from "../provider.js"
 import { optional } from "../schema.js"
 
 export const Settings = Schema.StructWithRest(
   Schema.Struct({
     timeout: Schema.Union([Schema.Finite, Schema.Literal(false)]).pipe(optional),
-    chunkTimeout: Schema.Finite.pipe(optional),
+    headerTimeout: Schema.Union([Schema.Finite, Schema.Literal(false)]).pipe(optional),
+    chunkTimeout: Schema.Union([Schema.Finite, Schema.Literal(false)]).pipe(optional),
     compaction: Provider.Compaction.pipe(optional),
     transport: Provider.Transport.pipe(optional),
+    encoding: Provider.Encoding.pipe(optional),
   }),
   [Schema.Record(Schema.String, Schema.UndefinedOr(Schema.Json))],
 ).annotate({ identifier: "Config.Provider.Settings" })
@@ -20,6 +23,7 @@ export type Settings = typeof Settings.Type
 export const ModelSettings = Schema.StructWithRest(
   Schema.Struct({
     compaction: Provider.Compaction.pipe(optional),
+    encoding: Provider.Encoding.pipe(optional),
   }),
   [Schema.Record(Schema.String, Schema.UndefinedOr(Schema.Json))],
 ).annotate({ identifier: "Config.Model.Settings" })
@@ -72,7 +76,14 @@ class Model extends Schema.Class<Model>("Config.Model")({
   compatibility: Compatibility.pipe(optional),
   package: Schema.String.pipe(optional),
   ...ModelOverlays,
-  capabilities: Capabilities.pipe(optional),
+  // Partial: unset fields fall back to the base model's capabilities, then the defaults.
+  capabilities: Capabilities.mapFields((fields) => ({
+    tools: optional(fields.tools),
+    input: optional(fields.input),
+    output: optional(fields.output),
+  }))
+    .annotate({ identifier: "Config.Model.Capabilities" })
+    .pipe(optional),
   variants: Schema.Struct({
     id: VariantID,
     ...ModelOverlays,
@@ -87,6 +98,8 @@ export class Info extends Schema.Class<Info>("Config.Provider")({
   name: Schema.String.pipe(optional),
   env: Schema.String.pipe(Schema.Array, optional),
   package: Schema.String.pipe(optional),
+  // Defaults for every model of this provider; model compatibility overrides individual fields.
+  compatibility: ProviderCompatibility.pipe(optional),
   ...Overlays,
   models: Schema.Record(Schema.String, Model).pipe(optional),
 }) {}

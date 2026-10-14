@@ -1,3 +1,4 @@
+import type { FileSystem } from "@opencode/core/filesystem"
 import fs from "fs/promises"
 import path from "path"
 import { describe, expect } from "bun:test"
@@ -67,7 +68,7 @@ const activityLocations = Layer.effect(
           workspaceID: ref.workspaceID,
           project: { id: Project.ID.global, directory: ref.directory, canonical: ref.directory },
         }),
-      ) as unknown as Layer.Layer<LocationServices>,
+      ) as unknown as Layer.Layer<LocationServices, FileSystem.DirectoryNotFoundError>,
     { idleTimeToLive: Duration.infinity },
   ),
 )
@@ -102,7 +103,7 @@ describe("LocationServiceMap", () => {
             yield* Effect.addFinalizer(() => Effect.promise(() => fs.chmod(directory, 0o755)))
           }
           if (failure === "config reference") {
-            yield* Effect.promise(() => fs.mkdir(directory))
+            yield* Effect.promise(() => fs.mkdir(path.join(directory, "username.txt"), { recursive: true }))
             yield* Effect.promise(() =>
               fs.writeFile(path.join(directory, "opencode.json"), JSON.stringify({ username: "{file:username.txt}" })),
             )
@@ -123,6 +124,7 @@ describe("LocationServiceMap", () => {
           }
           if (failure === "permissions") yield* Effect.promise(() => fs.chmod(directory, 0o755))
           if (failure === "config reference") {
+            yield* Effect.promise(() => fs.rm(path.join(directory, "username.txt"), { recursive: true }))
             yield* Effect.promise(() => fs.writeFile(path.join(directory, "username.txt"), "test-user"))
           }
           expect((yield* Effect.promise(() => fs.stat(directory))).isDirectory()).toBe(true)
@@ -146,7 +148,7 @@ describe("LocationServiceMap", () => {
         const locations = yield* LocationServiceMap.Service
         if (failure === "file") yield* Effect.promise(() => fs.writeFile(directory, "file"))
         if (failure === "config reference") {
-          yield* Effect.promise(() => fs.mkdir(directory))
+          yield* Effect.promise(() => fs.mkdir(path.join(directory, "username.txt"), { recursive: true }))
           yield* Effect.promise(() =>
             fs.writeFile(path.join(directory, "opencode.json"), JSON.stringify({ username: "{file:username.txt}" })),
           )
@@ -164,6 +166,7 @@ describe("LocationServiceMap", () => {
         if (failure === "file") yield* Effect.promise(() => fs.rm(directory))
         if (failure !== "config reference") yield* Effect.promise(() => fs.mkdir(directory))
         if (failure === "config reference") {
+          yield* Effect.promise(() => fs.rm(path.join(directory, "username.txt"), { recursive: true }))
           yield* Effect.promise(() => fs.writeFile(path.join(directory, "username.txt"), "test-user"))
         }
         const repaired = yield* locations.contextEffect(ref)

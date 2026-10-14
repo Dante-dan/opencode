@@ -30,7 +30,7 @@ export const Plugin = define({
           })
         }
         integrations.update(integrationID, (integration) => {
-          integration.name = provider.name ?? integration.name
+          integration.name = provider.name || integration.name
         })
         if (provider.env !== undefined) {
           integrations.method.update({
@@ -66,8 +66,10 @@ export const Plugin = define({
             })
           provider.activation = "enabled"
           if (item.canonical !== undefined) provider.canonical = item.canonical
-          if (item.name !== undefined) provider.name = item.name
+          if (item.name) provider.name = item.name
           if (item.package !== undefined) provider.package = item.package
+          if (item.compatibility !== undefined)
+            provider.compatibility = { ...provider.compatibility, ...item.compatibility }
           if (item.settings !== undefined) provider.settings = Provider.mergeOverlay(provider.settings, item.settings)
           if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
           if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
@@ -109,7 +111,7 @@ export const Plugin = define({
               if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
             }
             if (config.family !== undefined) model.family = config.family
-            if (config.name !== undefined) model.name = config.name
+            if (config.name) model.name = config.name
             if (config.modelID !== undefined) model.modelID = config.modelID
             if (config.compatibility !== undefined)
               model.compatibility = { ...model.compatibility, ...config.compatibility }
@@ -117,13 +119,8 @@ export const Plugin = define({
             if (config.settings !== undefined) model.settings = Provider.mergeOverlay(model.settings, config.settings)
             if (config.headers !== undefined) model.headers = Provider.mergeHeaders(model.headers, config.headers)
             if (config.body !== undefined) model.body = Provider.mergeOverlay(model.body, config.body)
-            if (config.capabilities !== undefined) {
-              model.capabilities = {
-                tools: config.capabilities.tools,
-                input: [...config.capabilities.input],
-                output: [...config.capabilities.output],
-              }
-            }
+            if (config.capabilities !== undefined)
+              model.capabilities = Model.mergeCapabilities(config.capabilities, model.capabilities)
             if (config.variants !== undefined) {
               model.variants ??= []
               for (const variant of config.variants) {
