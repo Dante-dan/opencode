@@ -889,6 +889,12 @@ describe("ConfigProviderPlugin.Plugin", () => {
             model.variants = [{ id: Model.VariantID.make("fast"), settings: { effort: "high" } }]
           })
         })
+        yield* models.transform((editor) => {
+          const model = editor.get(providerID, modelID)
+          if (!model) return
+          expect(model.limit).toEqual({ context: 100, output: 75 })
+          model.limit = { context: 10, output: 1 }
+        })
         yield* addPlugin(entries)
 
         const provider = required(yield* providers.get(providerID))
