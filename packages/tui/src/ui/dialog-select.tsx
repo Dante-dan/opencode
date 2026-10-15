@@ -7,7 +7,7 @@ import { createStore } from "solid-js/store"
 import { useRenderer, useTerminalDimensions } from "@opentui/solid"
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
-import { useDialog, type DialogContext } from "./dialog"
+import { DIALOG_LIST_INSET, DialogHeader, useDialog, type DialogContext } from "./dialog"
 import { Locale } from "../util/locale"
 import { getScrollAcceleration } from "../util/scroll"
 import { useConfig } from "../config"
@@ -88,7 +88,7 @@ export interface DialogSelectOption<T = any> {
 
 export function dialogSelectContentWidth(dialogWidth: number) {
   // Scroll padding, row padding, the gutter, title padding, and the separating gap.
-  return dialogWidth - 12
+  return dialogWidth - DIALOG_LIST_INSET * 2 - 4
 }
 
 export type DialogSelectRef<T> = {
@@ -671,17 +671,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   return (
     <box gap={1} paddingBottom={1} flexGrow={1}>
-      <box paddingLeft={4} paddingRight={4}>
-        <box flexDirection="row" justifyContent="space-between">
-          {props.titleView ?? (
-            <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
-              {props.title}
-            </text>
-          )}
-          <text fg={theme.text.muted} onMouseUp={() => (props.onCancel ?? dialog.clear)()}>
-            esc
-          </text>
-        </box>
+      <box paddingLeft={DIALOG_LIST_INSET} paddingRight={DIALOG_LIST_INSET}>
+        <DialogHeader title={props.title} titleView={props.titleView} onClose={props.onCancel} />
         <Show when={props.renderFilter !== false}>
           <box paddingTop={1}>
             <input
@@ -719,20 +710,21 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               when={props.renderFilter !== false && store.filter.length > 0}
               fallback={
                 props.emptyView ?? (
-                  <box paddingLeft={4} paddingRight={4}>
+                  <box paddingLeft={DIALOG_LIST_INSET} paddingRight={DIALOG_LIST_INSET}>
                     <text fg={theme.text.muted}>No items available</text>
                   </box>
                 )
               }
             >
               {props.noMatchView ?? (
-                <box paddingLeft={4} paddingRight={4}>
+                <box paddingLeft={DIALOG_LIST_INSET} paddingRight={DIALOG_LIST_INSET}>
                   <text fg={theme.text.muted}>No results found</text>
                 </box>
               )}
             </Show>
           }
         >
+          {/* The 1-cell inset keeps the row highlight off the panel edge; rows add the rest of DIALOG_LIST_INSET. */}
           <scrollbox
             paddingLeft={1}
             paddingRight={1}
@@ -745,7 +737,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               {([category, options], index) => (
                 <>
                   <Show when={category}>
-                    <box paddingTop={index() > 0 ? 1 : 0} paddingLeft={3}>
+                    <box paddingTop={index() > 0 ? 1 : 0} paddingLeft={DIALOG_LIST_INSET - 1}>
                       <text fg={theme.hue.accent[200]} attributes={TextAttributes.BOLD}>
                         {category}
                       </text>
@@ -780,8 +772,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                         >
                           <box
                             flexDirection="row"
-                            paddingLeft={current() || option.gutter ? 1 : 3}
-                            paddingRight={3}
+                            paddingLeft={current() || option.gutter ? DIALOG_LIST_INSET - 3 : DIALOG_LIST_INSET - 1}
+                            paddingRight={DIALOG_LIST_INSET - 1}
                             gap={1}
                             backgroundColor={
                               active()
@@ -792,7 +784,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                             }
                           >
                             <Show when={!current() && option.margin}>
-                              <box position="absolute" left={1} flexShrink={0}>
+                              <box position="absolute" left={DIALOG_LIST_INSET - 3} flexShrink={0}>
                                 {option.margin}
                               </box>
                             </Show>
@@ -815,7 +807,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                           </box>
                           <For each={option.details}>
                             {(detail) => (
-                              <box paddingLeft={3} paddingRight={3}>
+                              <box paddingLeft={DIALOG_LIST_INSET - 1} paddingRight={DIALOG_LIST_INSET - 1}>
                                 <text fg={theme.text.muted} wrapMode="none">
                                   {Locale.truncateMiddle(detail, Math.max(1, Math.min(76, dimensions().width - 12)))}
                                 </text>
@@ -833,7 +825,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         </Show>
       </box>
       <Show when={props.footer || visibleActions().length} fallback={<box flexShrink={0} />}>
-        <box paddingRight={2} paddingLeft={4} flexDirection="row" justifyContent="space-between" flexShrink={0}>
+        <box
+          paddingLeft={DIALOG_LIST_INSET}
+          paddingRight={DIALOG_LIST_INSET}
+          flexDirection="row"
+          justifyContent="space-between"
+          flexShrink={0}
+        >
           <box flexDirection={dimensions().width < 60 ? "column" : "row"} gap={dimensions().width < 60 ? 0 : 2}>
             {props.footer}
             <For each={left()}>{(item) => <FooterAction item={item} />}</For>

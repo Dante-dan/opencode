@@ -1,9 +1,8 @@
-import { TextAttributes } from "@opentui/core"
 import { createEffect, createMemo, createResource, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { Keymap } from "../context/keymap"
 import { useTheme } from "../context/theme"
 import type { UpdateState } from "../context/update-notification"
-import { useDialog } from "../ui/dialog"
+import { DIALOG_INSET, DialogHeader, useDialog } from "../ui/dialog"
 import { errorMessage } from "../util/error"
 import { Spinner } from "./spinner"
 
@@ -86,19 +85,16 @@ export function DialogUpdate(props: {
   }))
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text attributes={TextAttributes.BOLD} fg={theme.text.base}>
-          {state().type === "installing"
+    <box paddingLeft={DIALOG_INSET} paddingRight={DIALOG_INSET} gap={1}>
+      <DialogHeader
+        title={
+          state().type === "installing"
             ? "Updating OpenCode"
             : state().type === "available" || state().type === "failed"
               ? "Update available"
-              : "Update"}
-        </text>
-        <text fg={theme.text.muted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
+              : "Update"
+        }
+      />
       <box paddingBottom={1}>
         <Show when={state()} keyed>
           {(current) => (

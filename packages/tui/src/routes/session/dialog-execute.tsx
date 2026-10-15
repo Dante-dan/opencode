@@ -8,15 +8,15 @@ import { useConfig } from "../../config"
 import { useClipboard } from "../../context/clipboard"
 import { Keymap } from "../../context/keymap"
 import { useTheme, useThemes } from "../../context/theme"
-import { dialogWidth, useDialog } from "../../ui/dialog"
+import { DIALOG_INSET, DialogHeader, dialogWidth, useDialog } from "../../ui/dialog"
 import { useToast } from "../../ui/toast"
 import { Locale } from "../../util/locale"
 import { getScrollAcceleration } from "../../util/scroll"
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
-// The part is passed as a live accessor prop so the dialog follows the tool
-// while child calls stream and the output arrives.
+// The part is the live store object, so the dialog follows the tool while child
+// calls stream and the output arrives.
 export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
   const dialog = useDialog()
   const clipboard = useClipboard()
@@ -49,7 +49,7 @@ export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
   // Code and JSON wrap by character, so the content height is known up front.
   // Sizing synchronously lets the dialog open complete instead of growing over frames.
   const height = createMemo(() => {
-    const width = Math.max(20, Math.min(dialogWidth(dialog.size), dimensions().width - 2) - 4)
+    const width = Math.max(20, Math.min(dialogWidth(dialog.size), dimensions().width - 2) - DIALOG_INSET * 2)
     const codeWidth = Math.max(1, width - digits() - 1)
     const body = highlighted()
     const outputRows = body
@@ -93,15 +93,17 @@ export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
 
   return (
     <box gap={1} paddingBottom={1}>
-      <box flexDirection="row" gap={2} paddingLeft={2} paddingRight={2}>
-        <text fg={theme.text.base} attributes={TextAttributes.BOLD} flexGrow={1}>
-          execute
-        </text>
+      <DialogHeader
+        gap={2}
+        newInset={DIALOG_INSET}
+        titleView={
+          <text fg={theme.text.base} attributes={TextAttributes.BOLD} flexGrow={1}>
+            execute
+          </text>
+        }
+      >
         <text fg={failed() ? theme.text.feedback.error.base : theme.text.muted}>{status()}</text>
-        <text fg={theme.text.muted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
-      </box>
+      </DialogHeader>
       <scrollbox
         id="execute-detail-scroll"
         ref={(value: ScrollBoxRenderable) => (scroll = value)}
@@ -111,7 +113,7 @@ export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
         scrollbarOptions={{ visible: false }}
         scrollAcceleration={getScrollAcceleration(config)}
       >
-        <box gap={1} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+        <box gap={1} paddingLeft={DIALOG_INSET} paddingRight={DIALOG_INSET} paddingTop={1} paddingBottom={1}>
           <box>
             <text fg={contentTheme.text.muted} attributes={TextAttributes.BOLD}>
               Code
@@ -162,7 +164,7 @@ export function DialogExecute(props: { part: SessionMessageAssistantTool }) {
           </box>
         </box>
       </scrollbox>
-      <box flexDirection="row" gap={3} flexWrap="wrap" paddingLeft={2} paddingRight={2}>
+      <box flexDirection="row" gap={3} flexWrap="wrap" paddingLeft={DIALOG_INSET} paddingRight={DIALOG_INSET}>
         <text fg={theme.text.muted}>↑/↓ scroll</text>
         <text onMouseUp={() => copy("code")}>
           <span style={{ fg: copied() === "code" ? theme.text.feedback.success.base : theme.text.base }}>

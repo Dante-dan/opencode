@@ -9,7 +9,6 @@ import { Button } from "@opencode/ui/button"
 import { Badge } from "@opencode/ui/badge"
 import { Dialog, DialogBody, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
 import { Icon } from "@opencode/ui/icon"
-import { IconButton } from "@opencode/ui/icon-button"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { Menu } from "@opencode/ui/menu"
@@ -31,6 +30,7 @@ import {
   ProviderModelIcon,
   ProviderModelSections,
 } from "@/providers/models/provider-group"
+import { consoleProviderName } from "@/providers/catalog/console"
 import "@/settings/settings.css"
 import "./select-dialog.css"
 
@@ -186,55 +186,46 @@ const ModelList: Component<{
   return (
     <div class="flex min-h-0 flex-1 flex-col">
       <div data-slot="model-selector-search" class="shrink-0 pt-px pb-3" classList={{ "px-4": !props.mobile }}>
-        <div class="relative">
-          <TextInput
-            type="search"
-            appearance="base"
-            class="!w-full self-stretch"
-            placeholder={language.t("dialog.model.search.placeholder")}
-            value={store.search}
-            autofocus={!props.mobile}
-            spellcheck={false}
-            autocorrect="off"
-            autocomplete="off"
-            autocapitalize="off"
-            onInput={(event) => setSearch(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.altKey || event.metaKey) return
+        <TextInput
+          type="search"
+          appearance="base"
+          class="!w-full self-stretch"
+          placeholder={language.t("dialog.model.search.placeholder")}
+          value={store.search}
+          autofocus={!props.mobile}
+          spellcheck={false}
+          autocorrect="off"
+          autocomplete="off"
+          autocapitalize="off"
+          onInput={(event) => setSearch(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.altKey || event.metaKey) return
 
-              if (event.key === "ArrowDown") {
-                event.preventDefault()
-                moveActive(1)
+            if (event.key === "ArrowDown") {
+              event.preventDefault()
+              moveActive(1)
 
-                return
-              }
+              return
+            }
 
-              if (event.key === "ArrowUp") {
-                event.preventDefault()
-                moveActive(-1)
+            if (event.key === "ArrowUp") {
+              event.preventDefault()
+              moveActive(-1)
 
-                return
-              }
+              return
+            }
 
-              if (event.key === "Enter" && !event.isComposing) {
-                event.preventDefault()
-                selectActive()
-              }
-            }}
-            aria-label={language.t("dialog.model.search.placeholder")}
-          />
-          <Show when={store.search}>
-            <IconButton
-              type="button"
-              variant="ghost-muted"
-              size="small"
-              class="settings-tab-search-clear"
-              icon={<Icon name="close" size="large" class="text-v2-icon-icon-muted" />}
-              onClick={() => setSearch("")}
-              aria-label={language.t("common.clear")}
-            />
-          </Show>
-        </div>
+            if (event.key === "Enter" && !event.isComposing) {
+              event.preventDefault()
+              selectActive()
+            }
+          }}
+          aria-label={language.t("dialog.model.search.placeholder")}
+          showClearButton={!!store.search}
+          clearIcon="circle-xmark"
+          clearLabel={language.t("common.clear")}
+          onClearClick={() => setSearch("")}
+        />
       </div>
       <div class="relative min-h-0" classList={{ "flex-1": !props.mobile }}>
         <div
@@ -309,6 +300,7 @@ export function ModelSelectorPopover(props: {
       fallback={
         <ModelSelectorPopoverView
           trigger={props.trigger}
+          all={controller.all}
           models={controller.models}
           groups={controller.groups}
           current={controller.current()}
@@ -504,6 +496,7 @@ function createModelSelectorController(input: {
 
 export function ModelSelectorPopoverView(props: {
   trigger: ModelSelectorTrigger
+  all: () => ModelItem[]
   models: (search: string) => ModelItem[]
   groups: (models: ModelItem[]) => { category: string; items: ModelItem[] }[]
   current: string | undefined
@@ -521,6 +514,21 @@ export function ModelSelectorPopoverView(props: {
   const models = createMemo(() => props.models(store.search))
   const groups = createMemo(() => props.groups(models()))
   const keys = () => [...groups().flatMap((group) => group.items.map(modelKey)), manageKey]
+
+  const managed = createMemo(() => consoleModelGroup(props.all()))
+  const managedIDs = createMemo(() => new Set(managed()?.providers.map((provider) => provider.id)))
+  const canonical = (provider: ModelItem["provider"]) => provider.canonical ?? provider.id.replace(/^console-/, "")
+
+  // The workspace badge only disambiguates a managed provider that is also connected directly.
+  const direct = createMemo(
+    () =>
+      new Set(
+        props
+          .all()
+          .filter((item) => !managedIDs().has(item.provider.id))
+          .map((item) => canonical(item.provider)),
+      ),
+  )
 
   const initialActive = () => {
     const selected = props.current
@@ -613,7 +621,7 @@ export function ModelSelectorPopoverView(props: {
           onCloseAutoFocus={dismiss.onCloseAutoFocus}
         >
           <div class="flex flex-col p-0.5">
-            <div class="flex h-7 items-center gap-2 rounded-sm pl-3 pr-2.5 text-v2-icon-icon-muted">
+            <div class="flex h-7 items-center gap-2 rounded-sm pl-3 pr-1 text-v2-icon-icon-muted">
               <Icon name="magnifying-glass" size="small" class="shrink-0" />
               <input
                 ref={(el) => (searchRef = el)}
@@ -663,12 +671,12 @@ export function ModelSelectorPopoverView(props: {
               <Show when={store.search.trim()}>
                 <button
                   type="button"
-                  class="flex size-5 items-center justify-center rounded-sm text-v2-icon-icon-muted hover:bg-v2-overlay-simple-overlay-hover"
+                  class="flex size-5 items-center justify-center rounded-sm bg-transparent text-v2-icon-icon-faint transition-colors hover:text-v2-icon-icon-base focus-visible:text-v2-icon-icon-base active:text-v2-icon-icon-base"
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={() => setSearch("")}
                   aria-label={language.t("common.clear")}
                 >
-                  <Icon name="close" size="small" />
+                  <Icon name="circle-xmark" />
                 </button>
               </Show>
             </div>
@@ -687,8 +695,26 @@ export function ModelSelectorPopoverView(props: {
                 <For each={groups()}>
                   {(group) => (
                     <Menu.Group>
-                      <Menu.GroupLabel class="gap-2 px-3">
-                        <span class="min-w-0 truncate">{group.items[0].provider.name}</span>
+                      <Menu.GroupLabel
+                        class="gap-1.5 pe-3"
+                        style={{ "padding-inline-start": group.items[0].provider.id === "opencode" ? "10px" : "12px" }}
+                      >
+                        <ProviderModelIcon provider={group.items[0].provider} class="shrink-0" />
+                        <Show
+                          when={managedIDs().has(group.category) ? managed() : undefined}
+                          fallback={<span class="min-w-0 truncate">{group.items[0].provider.name}</span>}
+                        >
+                          {(workspace) => (
+                            <>
+                              <span class="min-w-0 truncate">
+                                {consoleProviderName(workspace(), group.items[0].provider.name)}
+                              </span>
+                              <Show when={direct().has(canonical(group.items[0].provider))}>
+                                <Badge class="shrink-0">{workspace().workspace}</Badge>
+                              </Show>
+                            </>
+                          )}
+                        </Show>
                       </Menu.GroupLabel>
                       <Menu.RadioGroup value={props.current}>
                         <For each={group.items}>

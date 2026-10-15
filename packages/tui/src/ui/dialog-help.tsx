@@ -1,7 +1,6 @@
-import { TextAttributes } from "@opentui/core"
 import { Keymap } from "../context/keymap"
 import { useTheme } from "../context/theme"
-import { useDialog } from "./dialog"
+import { DIALOG_INSET, DialogHeader, useDialog } from "./dialog"
 
 export function DialogHelp() {
   const dialog = useDialog()
@@ -17,15 +16,8 @@ export function DialogHelp() {
   }))
 
   return (
-    <box paddingLeft={2} paddingRight={2} gap={1}>
-      <box flexDirection="row" justifyContent="space-between">
-        <text attributes={TextAttributes.BOLD} fg={theme.text.base}>
-          Help
-        </text>
-        <text fg={theme.text.muted} onMouseUp={() => dialog.clear()}>
-          esc/enter
-        </text>
-      </box>
+    <box paddingLeft={DIALOG_INSET} paddingRight={DIALOG_INSET} gap={1}>
+      <DialogHeader title="Help" closeLabel="esc/enter" />
       <box paddingBottom={1}>
         <text fg={theme.text.muted}>
           Press {shortcuts.get("command.palette.show")} to see all available actions and commands in any context.

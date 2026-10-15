@@ -1,6 +1,6 @@
 {
   "name": "@opencode/ui",
-  "version": "2.0.24",
+  "version": "2.0.29",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -78,6 +78,7 @@
     "./storybook/fixtures": "./src/storybook/fixtures.ts",
     "./styles": "./src/styles/index.css",
     "./styles/tokens": "./src/styles/tokens/index.css",
+    "./styles/tokens/*": "./src/styles/tokens/*",
     "./styles/tailwind": "./src/styles/tailwind/index.css",
     "./theme": "./src/theme/index.ts",
     "./theme/*": "./src/theme/*.ts",
@@ -109,6 +110,7 @@
     "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
+    "@kitlangton/solid-motion": "0.2.2",
     "@kobalte/core": "catalog:",
     "@pierre/diffs": "catalog:",
     "@solid-primitives/event-listener": "catalog:",
@@ -116,7 +118,6 @@
     "fuzzysort": "catalog:",
     "katex": "0.16.47",
     "marked": "catalog:",
-    "marked-katex-extension": "5.1.13",
     "marked-shiki": "catalog:",
     "motion": "12.34.5",
     "remeda": "catalog:",

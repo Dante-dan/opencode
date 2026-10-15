@@ -98,7 +98,7 @@ it.live("loads a local plugin with its configured options", () =>
       target: path.join(import.meta.dir, "plugin/fixtures/greeting.ts"),
       options: { description: "Configured greeting" },
     })
-    if ("pending" in definition) return yield* Effect.die("Local plugin was not loaded")
+    if ("pending" in definition || "blocked" in definition) return yield* Effect.die("Local plugin was not loaded")
     yield* plugins.activate([definition])
 
     expect(yield* commands.get("greet")).toMatchObject({ description: "Configured greeting" })
@@ -606,5 +606,41 @@ it.effect("refreshes expired OAuth credentials through the context during activa
       }),
     ).toEqual(refreshed)
     expect(refreshes).toEqual([expired])
+  }),
+)
+
+it.effect("activates a saved credential through the context", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const credentials = yield* Credential.Service
+    const integrations = yield* Integration.Service
+    const integrationID = Integration.ID.make("activate-fixture")
+    const first = yield* credentials.create({
+      integrationID,
+      label: "First",
+      value: Credential.Key.make({ type: "key", key: "first" }),
+    })
+    yield* credentials.create({
+      integrationID,
+      label: "Second",
+      value: Credential.Key.make({ type: "key", key: "second" }),
+    })
+    expect(yield* integrations.connection.active(integrationID)).toMatchObject({ label: "Second" })
+
+    yield* plugins.activate([
+      {
+        ...fromPromise({
+          id: "activate-credential",
+          async setup(ctx) {
+            await ctx.credential.activate({ credentialID: first.id })
+          },
+        }),
+        revision: "1",
+      },
+    ])
+    yield* plugins.awaitActivation
+
+    expect(yield* plugins.list()).toMatchObject([{ id: "activate-credential", state: { status: "active" } }])
+    expect(yield* integrations.connection.active(integrationID)).toMatchObject({ id: first.id, label: "First" })
   }),
 )

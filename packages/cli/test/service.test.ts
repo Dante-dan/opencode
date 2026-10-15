@@ -1,9 +1,11 @@
 import { NodeFileSystem } from "@effect/platform-node"
+import { validateRoutes } from "@opentunnel/client/effect"
 import { Service, type Info } from "@opencode/client/effect/service"
 import { Global } from "@opencode/util/global"
 import { OPENCODE_VERSION } from "../src/version"
 import { expect, test } from "bun:test"
 import { Deferred, Effect, FileSystem, Schedule, Schema } from "effect"
+import { NetAddress } from "effect/net"
 import { TestClock } from "effect/testing"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -16,13 +18,27 @@ import { testEffect } from "../../core/test/lib/effect"
 const it = testEffect(NodeFileSystem.layer)
 
 test("managed service ports are stable per installation channel", () => {
-  expect(ServiceConfig.defaultPort("latest")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("dev")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("beta")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("next")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("local")).toBe(0xc0df)
-  expect(ServiceConfig.defaultPort("preview-a")).toBe(ServiceConfig.defaultPort("preview-a"))
-  expect(ServiceConfig.defaultPort("preview-a")).not.toBe(ServiceConfig.defaultPort("preview-b"))
+  expect(ServiceConfig.defaultPort("latest", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("dev", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("beta", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("next", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("local", "linux")).toBe(0xc0df)
+  expect(ServiceConfig.defaultPort("latest", "darwin")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("preview-a", "linux")).toBe(ServiceConfig.defaultPort("preview-a", "linux"))
+  expect(ServiceConfig.defaultPort("preview-a", "linux")).not.toBe(ServiceConfig.defaultPort("preview-b", "linux"))
+})
+
+test("managed service ports on Windows stay below the range Windows reserves", () => {
+  expect(ServiceConfig.defaultPort("latest", "win32")).toBe(0xc0de - 4096)
+  expect(ServiceConfig.defaultPort("dev", "win32")).toBe(0xc0de - 4096)
+  expect(ServiceConfig.defaultPort("local", "win32")).toBe(0xc0df - 4096)
+  const ports = Array.from({ length: 200 }, (_, index) => ({
+    windows: ServiceConfig.defaultPort(`preview-${index}`, "win32"),
+    linux: ServiceConfig.defaultPort(`preview-${index}`, "linux"),
+  }))
+  expect(ports.some((port) => port.linux >= 0xc000)).toBe(true)
+  expect(ports.every((port) => port.windows >= 10_000 && port.windows < 0xc000)).toBe(true)
+  expect(ports.filter((port) => port.linux < 0xc000 && port.windows !== port.linux)).toEqual([])
 })
 
 test("service disabled accepts only booleans without changing configuration on invalid input", async () => {
@@ -38,6 +54,83 @@ test("service disabled accepts only booleans without changing configuration on i
     expect(await run(ServiceConfig.read())).toEqual({ disabled: true })
     await run(ServiceConfig.unset("disabled"))
     expect(await run(ServiceConfig.read())).toEqual({})
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+// Enabling remote creates a real tunnel, so only the paths that stay local are covered here.
+test("service remote accepts only booleans and persists across set and unset", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-remote-config-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const run = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)))
+  try {
+    expect(await run(ServiceConfig.get("remote"))).toBe("false")
+    await expect(run(ServiceConfig.set("remote", "on"))).rejects.toThrow("Remote must be true or false")
+    expect(await run(ServiceConfig.read())).toEqual({})
+    await run(ServiceConfig.set("remote", "false"))
+    expect(await run(ServiceConfig.read())).toEqual({})
+    expect(await run(ServiceConfig.get("remote"))).toBe("false")
+    await run(ServiceConfig.unset("remote"))
+    expect(await run(ServiceConfig.read())).toEqual({})
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test("remote access route is random, stable once created, hidden, and forgotten when remote is turned off", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-remote-route-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const run = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)))
+  try {
+    const route = await run(ServiceConfig.remote())
+    // The SDK rejects invalid route names, which would keep the service from ever attaching.
+    expect(() => validateRoutes({ [route]: "127.0.0.1:4096" })).not.toThrow()
+    expect(route).toMatch(/^[0-9a-f]{16}$/)
+    expect(await run(ServiceConfig.read())).toEqual({ remote: { route } })
+    expect(await run(ServiceConfig.remote())).toBe(route)
+    expect(await run(ServiceConfig.get("remote"))).toBe("true")
+    expect(await run(ServiceConfig.get())).not.toContain(route)
+
+    await run(ServiceConfig.set("remote", "false"))
+    expect(await run(ServiceConfig.read())).toEqual({ remoteAccepted: true })
+    expect(await run(ServiceConfig.get("remote"))).toBe("false")
+    expect(await run(ServiceConfig.remote())).not.toBe(route)
+
+    await run(ServiceConfig.unset("remote"))
+    expect(await run(ServiceConfig.read())).toEqual({ remoteAccepted: true })
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test("reading a config with remote access stored as a boolean repairs it in place and keeps other settings", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-remote-legacy-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const run = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)))
+  const file = path.join(root, "config", ServiceConfig.filename())
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+
+    await Bun.write(file, JSON.stringify({ remote: true, password: "kept", env: { A: "1" } }))
+    const enabled = await run(ServiceConfig.read())
+    const route = enabled.remote?.route ?? ""
+    expect(route).toMatch(/^[0-9a-f]{16}$/)
+    expect(enabled).toEqual({ remote: { route }, password: "kept", env: { A: "1" } })
+    expect(await Bun.file(file).json()).toEqual(enabled)
+    expect(await run(ServiceConfig.read())).toEqual(enabled)
+
+    await Bun.write(file, JSON.stringify({ remote: false, password: "kept" }))
+    expect(await run(ServiceConfig.read())).toEqual({ password: "kept" })
+    expect(await Bun.file(file).json()).toEqual({ password: "kept" })
+
+    const current = JSON.stringify({ remote: { route: "0123456789abcdef" }, password: "kept" })
+    await Bun.write(file, current)
+    expect(await run(ServiceConfig.read())).toEqual({ remote: { route: "0123456789abcdef" }, password: "kept" })
+    expect(await Bun.file(file).text()).toBe(current)
   } finally {
     await fs.rm(root, { recursive: true, force: true })
   }
@@ -554,7 +647,7 @@ test("service registration replaces a stale owner with the bound address", async
   try {
     const cleanup = await Effect.runPromise(
       ServiceRegistration.register({
-        address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 4321 },
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 4321),
         password: "secret",
         id: "owner",
         file: registration,
@@ -649,7 +742,7 @@ const registered = Effect.fnUntraced(function* () {
   const file = path.join(yield* fileSystem.makeTempDirectoryScoped(), "service-local.json")
   const stopped = yield* Deferred.make<void>()
   const cleanup = yield* ServiceRegistration.register({
-    address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 4321 },
+    address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 4321),
     password: "secret",
     id: "owner",
     file,

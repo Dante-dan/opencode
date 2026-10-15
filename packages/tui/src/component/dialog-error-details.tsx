@@ -9,7 +9,7 @@ import { useRoute } from "../context/route"
 import { getScrollAcceleration } from "../util/scroll"
 import { useTheme } from "../context/theme"
 import { emptyPrompt } from "../prompt/history"
-import { dialogWidth, useDialog } from "../ui/dialog"
+import { DIALOG_INSET, DialogHeader, dialogWidth, useDialog } from "../ui/dialog"
 import { FilePath } from "../ui/file-path"
 import { useToast } from "../ui/toast"
 import { errorDetails } from "../util/error-details"
@@ -71,28 +71,29 @@ export function DialogErrorDetails(props: {
   })
 
   return (
-    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+    <box paddingLeft={DIALOG_INSET} paddingRight={DIALOG_INSET} paddingBottom={1} gap={1}>
       <box>
-        <box flexDirection="row" gap={2}>
-          <text
-            attributes={TextAttributes.BOLD}
-            fg={theme.text.base}
-            flexGrow={1}
-            minWidth={0}
-            wrapMode="none"
-            truncate
-          >
-            {props.title}
-          </text>
-          <text fg={theme.text.muted} flexShrink={0} onMouseUp={props.onBack}>
-            esc
-          </text>
-        </box>
+        <DialogHeader
+          gap={2}
+          onClose={props.onBack}
+          titleView={
+            <text
+              attributes={TextAttributes.BOLD}
+              fg={theme.text.base}
+              flexGrow={1}
+              minWidth={0}
+              wrapMode="none"
+              truncate
+            >
+              {props.title}
+            </text>
+          }
+        />
         <Show when={props.source}>
           {(source) => (
             <FilePath
               value={source()}
-              maxWidth={Math.min(dialogWidth(dialog.size), dimensions().width - 2) - 4}
+              maxWidth={Math.min(dialogWidth(dialog.size), dimensions().width - 2) - DIALOG_INSET * 2}
               fg={theme.text.muted}
             />
           )}

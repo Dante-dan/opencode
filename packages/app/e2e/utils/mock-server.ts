@@ -3,14 +3,15 @@ import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client/promise
 import { Permission } from "@opencode/schema/permission"
 import { Worktree } from "@opencode/schema/worktree"
 import { Duration, Effect, Layer, Option, Predicate, Schema } from "effect"
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http"
+import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { SERVER } from "./app"
 import {
   MockApi,
   MockBadRequest,
   MockInternal,
   MockNotFound,
+  MockPtyNotFound,
   MockShellNotFound,
   MockUnauthorized,
   MockUnsupported,
@@ -43,7 +44,11 @@ export type MockFileContent =
 export interface MockServerConfig {
   server?: string
   provider: Resolvable<MockProviderCatalog>
-  integrations?: unknown[]
+  integrations?: Resolvable<unknown[]>
+  // Runs on POST /api/credential/:id/activate; the fixture swaps its integrations and catalog to the new account.
+  onCredentialActivate?: (credentialID: string) => void
+  // Runs on PATCH /api/credential/:id with the request body; the fixture applies the new label.
+  onCredentialUpdate?: (credentialID: string, body: { label?: string }) => void
   onConnectKey?: (input: { integrationID: string; body: unknown }) => void
   // Terminal shells the settings offer (`/api/config/shell`).
   shells?: unknown[]
@@ -102,6 +107,8 @@ export interface MockServerConfig {
   // Starts an OAuth attempt (POST .../connect/oauth) and returns its authorization URL; the attempt then stays pending.
   // Without it, OAuth connects answer 501 MockUnsupported.
   onIntegrationOAuth?: (input: { integrationID: string; directory: string; body: unknown }) => { url: string }
+  // Answers status polls for an OAuth attempt; without it every attempt stays pending.
+  onIntegrationOAuthStatus?: (attemptID: string) => "pending" | "complete"
   plugins?: Resolvable<unknown[]>
   skills?: Resolvable<unknown[]>
   // Replaces the `/api/worktree` inventory, which defaults to the directory plus project sandboxes.
@@ -135,6 +142,8 @@ export interface MockServerConfig {
   strictDirectory?: boolean
   // Answers 401 UnauthorizedError unless a request carries this password; a function may change it mid-test.
   password?: Resolvable<string>
+  // Serves GET /auth/connect/:code: `code` redeems once for `token` (send it as the password); others answer 401.
+  pairing?: { code: string; token: string }
 }
 
 export type MockPtyInfo = {
@@ -147,7 +156,14 @@ export type MockPtyInfo = {
   pid: number
 }
 
-export type MockPtySocket = { id: string; url: URL; input: string[]; closed: boolean; send(data: string): void }
+export type MockPtySocket = {
+  id: string
+  url: URL
+  input: string[]
+  closed: boolean
+  send(data: string): void
+  close(code: number, reason: string): Promise<void>
+}
 
 export type MockPty = {
   list: MockPtyInfo[]
@@ -401,6 +417,29 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
     })
   })
 
+  if (config.pairing) {
+    const pairing = { ...config.pairing, redeemed: false }
+
+    await page.route(`${server}/auth/connect/*`, (route) => {
+      if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: corsHeaders })
+      const code = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1) ?? "")
+
+      if (code !== pairing.code || pairing.redeemed) {
+        return route.fulfill({
+          status: 401,
+          headers: corsHeaders,
+          json: Schema.encodeSync(MockUnauthorized)(
+            new MockUnauthorized({ message: "Pairing link expired or already used" }),
+          ),
+        })
+      }
+
+      pairing.redeemed = true
+
+      return route.fulfill({ headers: corsHeaders, json: { token: pairing.token } })
+    })
+  }
+
   if (config.pty) {
     const host = new URL(server).host
     await page.routeWebSocket(
@@ -422,6 +461,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
           input: [],
           closed: false,
           send: (data) => ws.send(data),
+          close: (code, reason) => ws.close({ code, reason }),
         }
 
         ws.onMessage((message) => socket.input.push(message.toString()))
@@ -434,6 +474,21 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
   }
 
   return { server, pty: transport.pty, push }
+}
+
+// Answers every Location-scoped request for `directory` as the server does once that folder is deleted.
+export function mockMissingLocation(page: Page, directory: string) {
+  return page.route(
+    (url) => url.pathname.startsWith("/api/") && url.searchParams.get("location[directory]") === directory,
+    (route) =>
+      route.fulfill({
+        status: 404,
+        // SAFETY: the server's wire body for a missing Location, which the client decodes into its own error.
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- see SAFETY above
+        json: { _tag: "LocationNotFoundError", location: { directory }, message: `Location not found: ${directory}` },
+        headers: { "access-control-allow-origin": "*" },
+      }),
+  )
 }
 
 // Mocks several servers on one page. Each origin gets its own handler and its own SSE transport for events.
@@ -672,7 +727,9 @@ function mockHandlers(
           const directory = requestDirectory(config, request)
           const found = state.pty.find(id, directory)
 
-          return found ? Effect.succeed(found) : Effect.fail(new MockNotFound({ message: "PTY not found" }))
+          return found
+            ? Effect.succeed(found)
+            : Effect.fail(new MockPtyNotFound({ ptyID: id, message: `PTY not found: ${id}` }))
         }),
       ),
     )
@@ -722,9 +779,15 @@ function mockHandlers(
         Effect.gen(function* () {
           const path = decodeURIComponent(new URL(ctx.request.url, "http://localhost").pathname.slice(13))
           const value = yield* Effect.promise(() => Promise.resolve(config.fileContent?.(path)))
-          const content = Predicate.isString(value) ? value : (value?.content ?? "")
 
-          return HttpServerResponse.uint8Array(new TextEncoder().encode(content))
+          if (Predicate.isString(value)) return HttpServerResponse.uint8Array(new TextEncoder().encode(value))
+
+          // Like the server, stream base64 content as the bytes it encodes.
+          return HttpServerResponse.uint8Array(
+            value?.encoding === "base64"
+              ? Buffer.from(value.content, "base64")
+              : new TextEncoder().encode(value?.content ?? ""),
+          )
         }),
       )
       // Raw, so a hook's answer can replace the status and body.
@@ -807,19 +870,20 @@ function mockHandlers(
         model: () => Effect.succeed({ location: location(config), data: currentModels(resolve(config.provider)) }),
         modelDefault: () =>
           Effect.succeed({ location: location(config), data: currentDefaultModel(resolve(config.provider)) }),
-        integrationList: () => Effect.succeed({ location: location(config), data: config.integrations ?? [] }),
+        integrationList: () =>
+          Effect.sync(() => ({ location: location(config), data: resolve(config.integrations ?? []) })),
         integrationGet: (ctx) =>
-          Effect.succeed({
+          Effect.sync(() => ({
             location: location(config),
-            data: config.integrations
-              ?.filter(Predicate.isObject)
+            data: resolve(config.integrations ?? [])
+              .filter(Predicate.isObject)
               .find((integration) => integration.id === ctx.params.integrationID) ?? {
               id: ctx.params.integrationID,
               name: ctx.params.integrationID,
               methods: [{ type: "key", label: "API key" }],
               connections: [],
             },
-          }),
+          })),
         integrationConnect: (ctx) =>
           Effect.sync(() => config.onConnectKey?.({ integrationID: ctx.params.integrationID, body: ctx.payload })).pipe(
             Effect.andThen(noContent),
@@ -856,9 +920,18 @@ function mockHandlers(
 
             return Effect.succeed({
               location: location(config, requestDirectory(config, ctx.request)),
-              data: { status: "pending", time: { created, expires: created + 600_000 } },
+              data: {
+                status: config.onIntegrationOAuthStatus?.(ctx.params.attemptID) ?? "pending",
+                time: { created, expires: created + 600_000 },
+              },
             })
           }),
+        credentialActivate: (ctx) =>
+          Effect.sync(() => config.onCredentialActivate?.(ctx.params.credentialID)).pipe(Effect.andThen(noContent)),
+        credentialUpdate: (ctx) =>
+          Effect.sync(() => config.onCredentialUpdate?.(ctx.params.credentialID, ctx.payload)).pipe(
+            Effect.andThen(noContent),
+          ),
         credentialRemove: () => noContent,
         command: (ctx) =>
           Effect.sync(() => ({
@@ -1362,6 +1435,8 @@ function currentProviders(catalog: MockProviderCatalog) {
     .map((provider) => ({
       id: provider.id,
       name: provider.name,
+      canonical: provider.canonical,
+      integrationID: provider.integrationID,
       package: provider.id,
       activation: connected.has(provider.id) ? "enabled" : "auto",
     }))
@@ -1435,7 +1510,7 @@ export function currentSession(session: MockSession, fallbackDirectory?: string)
     parentID: session.parentID,
     projectID: session.projectID ?? "project",
     agent: session.agent ?? "build",
-    model: session.model ?? { id: "mock-model", providerID: "mock-provider" },
+    model: session.model,
     cost: session.cost ?? 0,
     tokens: session.tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     ...decodeSessionOutcome(session),
@@ -1493,7 +1568,14 @@ const decodePromptPayload = Schema.decodeUnknownOption(
   }),
 )
 
-const decodeProvider = Schema.decodeUnknownOption(Schema.Struct({ id: Schema.String, name: Schema.String }))
+const decodeProvider = Schema.decodeUnknownOption(
+  Schema.Struct({
+    id: Schema.String,
+    name: Schema.String,
+    canonical: lenient(Schema.String),
+    integrationID: lenient(Schema.String),
+  }),
+)
 
 const decodeModelProvider = Schema.decodeUnknownOption(
   Schema.Struct({ id: Schema.String, models: Schema.Record(Schema.String, Schema.Unknown) }),
