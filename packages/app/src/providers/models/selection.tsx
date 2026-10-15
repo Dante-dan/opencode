@@ -89,6 +89,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const models = useModels()
     const settings = useSettings()
     const configuredModel = useConfiguredModel()
+    const configuredAgent = createMemo(() => {
+      const entry = data.location.config
+        .list({ directory: sdk().directory })
+        ?.findLast((entry) => entry.type === "document" && entry.info.default_agent !== undefined)
+      return entry?.type === "document" ? entry.info.default_agent : undefined
+    })
 
     const id = createMemo(() => params.id || undefined)
 
@@ -112,7 +118,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       draft?: State
       promoting?: State
     }>({
-      current: list()[0]?.name,
+      current: undefined,
       draft: undefined,
     })
 
@@ -146,7 +152,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
 
       if (items.some((item) => item.name === store.current)) return
-      setStore("current", items[0]?.name)
+      setStore("current", undefined)
     })
 
     const scope = createMemo<State | undefined>(() => {
@@ -208,7 +214,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       list,
       visible: agentsVisible,
       current() {
-        return pickAgent(scope()?.agent ?? durable()?.agent ?? (agentsVisible() ? store.current : "build"))
+        return pickAgent(
+          scope()?.agent ??
+            durable()?.agent ??
+            (agentsVisible() ? store.current : undefined) ??
+            configuredAgent() ??
+            (agentsVisible() ? list()[0]?.name : "build"),
+        )
       },
       set(name: string | undefined) {
         const item = pickAgent(name)

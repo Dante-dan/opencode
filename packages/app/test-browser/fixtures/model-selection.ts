@@ -97,7 +97,9 @@ afterEach(() =>
     .forEach((dispose) => dispose()),
 )
 
-function fixture(input: { session?: Commit; agents?: Agent[]; config?: ConfigModel; preferred?: string } = {}) {
+function fixture(
+  input: { session?: Commit; agents?: Agent[]; config?: ConfigModel; defaultAgent?: string; preferred?: string } = {},
+) {
   const directory = `/selection-test/${crypto.randomUUID()}`
 
   // SAFETY: fixture transitions clear the route as well as selecting session IDs.
@@ -108,6 +110,7 @@ function fixture(input: { session?: Commit; agents?: Agent[]; config?: ConfigMod
     route: { id: "ses_a" as string | undefined },
     agents: input.agents ?? [agent("build"), agent("plan")],
     config: input.config,
+    defaultAgent: input.defaultAgent,
     sessions: Object.fromEntries([["ses_a", input.session]]),
     providers: [{ id: "provider", name: "Provider", package: "@ai-sdk/test", activation: "enabled" }],
     models: ["a", "b", "c"].map((id) => ({
@@ -149,7 +152,10 @@ function fixture(input: { session?: Commit; agents?: Agent[]; config?: ConfigMod
       location: {
         agent: { list: () => state.agents },
         config: {
-          list: () => (state.configLoaded ? [{ type: "document", info: { model: state.config } }] : undefined),
+          list: () =>
+            state.configLoaded
+              ? [{ type: "document", info: { model: state.config, default_agent: state.defaultAgent } }]
+              : undefined,
           sync: async () => {
             configLoads.push(state.connection)
           },
@@ -221,11 +227,31 @@ function selection(local: ReturnType<typeof useLocal>) {
 }
 
 test("restores durable agents even when the agent selector is hidden", () => {
-  const f = fixture({ session: durable("b", "high", "plan") })
+  const f = fixture({ session: durable("b", "high", "plan"), defaultAgent: "build" })
   f.set("visible", false)
   const { local } = f.mount()
   expect(local.agent.visible()).toBe(false)
   expect(selection(local)).toEqual({ agent: "plan", model: "b", variant: "high" })
+})
+
+test.each([true, false])("new sessions use the configured default with picker visibility %s", (visible) => {
+  const f = fixture({ agents: [agent("build"), agent("plan"), agent("custom")], defaultAgent: "custom" })
+  f.set("route", "id", undefined)
+  f.set("visible", visible)
+  const { local } = f.mount()
+  expect(local.agent.current()?.name).toBe("custom")
+  f.set("visible", !visible)
+  expect(local.agent.current()?.name).toBe("custom")
+  local.agent.set("plan")
+  f.set("defaultAgent", "build")
+  expect(local.agent.current()?.name).toBe("plan")
+})
+
+test("unavailable configured default agents retain the build fallback", () => {
+  const f = fixture({ defaultAgent: "missing" })
+  f.set("route", "id", undefined)
+  const { local } = f.mount()
+  expect(local.agent.current()?.name).toBe("build")
 })
 
 test("waits for initial configuration and reloads it after reconnecting", () => {
