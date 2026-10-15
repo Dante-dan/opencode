@@ -1,5 +1,6 @@
 import { Predicate } from "effect"
 import { base64Encode } from "@opencode/util/encode"
+import { sameDirectory } from "@opencode/util/path"
 import { Session } from "@opencode/schema/session"
 import { startTransition } from "solid-js"
 import type { NewSessionComposerAdapter } from "@/composer/adapter"
@@ -48,8 +49,8 @@ export function createNewSessionComposerAdapter(props: {
       const draftID = props.draftID
       const currentDirectory = location().directory
 
-      const projectDirectory =
-        data.location.info({ directory: currentDirectory })?.project.canonical ?? currentDirectory
+      const project = data.location.info({ directory: currentDirectory })?.project
+      const projectDirectory = project?.canonical ?? currentDirectory
 
       const worktree = props.worktree()
       const branch = props.branch()
@@ -64,6 +65,8 @@ export function createNewSessionComposerAdapter(props: {
       await pending?.ready
 
       const sessionDirectory = await resolveSessionDirectory({
+        localDirectory:
+          project && !sameDirectory(project.directory, project.canonical) ? projectDirectory : currentDirectory,
         projectDirectory,
         worktree,
         branch,
@@ -196,6 +199,7 @@ export function createNewSessionComposerAdapter(props: {
 }
 
 async function resolveSessionDirectory(input: {
+  localDirectory: string
   projectDirectory: string
   worktree: string
   branch?: string
@@ -203,7 +207,7 @@ async function resolveSessionDirectory(input: {
   serverSDK: ReturnType<typeof useServerSDK>
   language: ReturnType<typeof useLanguage>
 }) {
-  if (input.worktree === "main") return input.projectDirectory
+  if (input.worktree === "main") return input.localDirectory
 
   if (input.worktree !== "create") return input.worktree
 

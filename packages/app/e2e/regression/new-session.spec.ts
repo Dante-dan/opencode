@@ -51,6 +51,52 @@ test("the new session screen does not show session details", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Session details", exact: true })).toHaveCount(0)
 })
 
+test("a local draft creates its session in the selected plain subdirectory", async ({ page }) => {
+  const directory = "C:/OpenCode/PlainSubdirectory/notes"
+  const created = Promise.withResolvers<unknown>()
+
+  const draft = await openDraft(page, {
+    name: "PlainSubdirectory",
+    directory,
+    project: { worktree: "C:/OpenCode/PlainSubdirectory", canonical: "C:/OpenCode/PlainSubdirectory" },
+    onSessionCreate: (body) => {
+      created.resolve(body)
+    },
+  })
+
+  await draft.editor.fill("Keep this session in the selected notes directory")
+  await expect(submit(page)).toBeEnabled()
+  await submit(page).click()
+  expect(await created.promise).toEqual(expect.objectContaining({ location: { directory } }))
+  await expect(page.locator('[data-slot="user-message-text"]')).toHaveText(
+    "Keep this session in the selected notes directory",
+  )
+})
+
+test("selecting Local from a linked worktree creates the session in the main repository", async ({ page }) => {
+  const root = "C:/OpenCode/MainRepository"
+  const directory = "C:/OpenCode/LinkedWorktree"
+  const created = Promise.withResolvers<unknown>()
+
+  const draft = await openDraft(page, {
+    name: "LinkedWorktree",
+    directory,
+    project: { worktree: directory, canonical: root, sandboxes: [directory] },
+    onSessionCreate: (body) => {
+      created.resolve(body)
+    },
+  })
+
+  await page.getByRole("button", { name: "LinkedWorktree", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Local repository", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Local", exact: true })).toBeVisible()
+  await draft.editor.fill("Use the main repository checkout")
+  await expect(submit(page)).toBeEnabled()
+  await submit(page).click()
+  expect(await created.promise).toEqual(expect.objectContaining({ location: { directory: root } }))
+  await expect(page.locator('[data-slot="user-message-text"]')).toHaveText("Use the main repository checkout")
+})
+
 test("the dark new session panel exposes no lighter background at its rounded corners", async ({ page }) => {
   await page.setViewportSize({ width: 935, height: 522 })
   await openDraft(page, { name: "PanelCorner", seed: { theme: { id: "oc-2", scheme: "dark" } } })
