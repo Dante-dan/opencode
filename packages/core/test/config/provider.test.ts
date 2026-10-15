@@ -889,13 +889,15 @@ describe("ConfigProviderPlugin.Plugin", () => {
             model.variants = [{ id: Model.VariantID.make("fast"), settings: { effort: "high" } }]
           })
         })
+        let transformed: Model.Info["limit"] | undefined
         yield* models.transform((editor) => {
           const model = editor.get(providerID, modelID)
           if (!model) return
-          expect(model.limit).toEqual({ context: 100, output: 75 })
+          transformed = { ...model.limit }
           model.limit = { context: 10, output: 1 }
         })
         yield* addPlugin(entries)
+        expect(transformed).toEqual({ context: 100, output: 75 })
 
         const provider = required(yield* providers.get(providerID))
         const model = required(yield* models.get(providerID, modelID))
@@ -949,5 +951,35 @@ describe("ConfigProviderPlugin.Plugin", () => {
         expect(model.variants?.[1]?.headers).toEqual({ slow: "slow" })
       }),
     ),
+  )
+
+  it.effect("does not leak a configured limit into a later alias", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const upstreamID = Provider.ID.make("upstream")
+      const modelID = Model.ID.make("x")
+      yield* providers.transform((editor) => {
+        editor.models.update(upstreamID, modelID, (model) => {
+          model.limit = { context: 1000, output: 100 }
+        })
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              upstream: { models: { x: { limit: { context: 5000 } } } },
+              proxy: { canonical: "upstream", models: { x: {} } },
+            },
+          }),
+        }),
+      ])
+
+      expect(required(yield* models.get(Provider.ID.make("proxy"), modelID)).limit).toEqual({
+        context: 1000,
+        output: 100,
+      })
+    }),
   )
 })

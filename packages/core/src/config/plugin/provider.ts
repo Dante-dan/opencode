@@ -81,18 +81,22 @@ export const Plugin = define({
           // Bind the source at this point in the provider fold. Later source edits/removal
           // and its credential availability must not change an already-defined alias.
           definitions.set(id, { inherit, base: base && structuredClone(base) })
-          if (!inherit && config.limit === undefined) continue
+          if (!inherit) continue
           providers.models.update(providerID, id, (model) => {
-            if (inherit) {
-              if (base) Object.assign(model, structuredClone(base))
-              if (item.package !== undefined) model.package = undefined
-              if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
-            }
-            // External transforms need configured limits before the late config overrides run.
-            if (config.limit !== undefined) model.limit = { ...model.limit, ...config.limit }
+            if (base) Object.assign(model, structuredClone(base))
+            if (item.package !== undefined) model.package = undefined
+            if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
           })
         }
         next.set(item, { providerID, models: definitions })
+      }
+      for (const [item, definition] of next) {
+        for (const [id, config] of Object.entries(item.models ?? {})) {
+          if (config.limit === undefined) continue
+          providers.models.update(definition.providerID, id, (model) => {
+            model.limit = { ...model.limit, ...config.limit }
+          })
+        }
       }
       sources.defaultModel = Config.latest(loaded.entries, "model")
       sources.models = next
