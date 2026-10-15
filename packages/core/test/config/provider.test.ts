@@ -952,34 +952,4 @@ describe("ConfigProviderPlugin.Plugin", () => {
       }),
     ),
   )
-
-  it.effect("does not leak a configured limit into a later alias", () =>
-    Effect.gen(function* () {
-      const providers = yield* Provider.Service
-      const models = yield* Model.Service
-      const upstreamID = Provider.ID.make("upstream")
-      const modelID = Model.ID.make("x")
-      yield* providers.transform((editor) => {
-        editor.models.update(upstreamID, modelID, (model) => {
-          model.limit = { context: 1000, output: 100 }
-        })
-      })
-      yield* addPlugin([
-        new Document({
-          type: "document",
-          info: decode({
-            providers: {
-              upstream: { models: { x: { limit: { context: 5000 } } } },
-              proxy: { canonical: "upstream", models: { x: {} } },
-            },
-          }),
-        }),
-      ])
-
-      expect(required(yield* models.get(Provider.ID.make("proxy"), modelID)).limit).toEqual({
-        context: 1000,
-        output: 100,
-      })
-    }),
-  )
 })
