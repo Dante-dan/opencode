@@ -2,6 +2,7 @@ export * as WebSearchMcp from "./mcp.js"
 
 import { Duration, Effect, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
+import { makeParser } from "effect/encoding/Sse"
 import { collectBoundedResponseBody } from "../../tool/http-body.js"
 
 export const MAX_RESPONSE_BYTES = 256 * 1024
@@ -17,9 +18,13 @@ export const parseResponse = <F extends Schema.Struct.Fields>(body: string, resu
     const trimmed = body.trim()
     const direct = trimmed ? yield* parse(trimmed) : undefined
     if (direct) return direct
-    for (const line of body.split("\n")) {
-      if (!line.startsWith("data: ")) continue
-      const data = yield* parse(line.substring(6))
+    const events: string[] = []
+    const parser = makeParser((event) => {
+      if (event._tag === "Event") events.push(event.data)
+    })
+    parser.feed(body)
+    for (const event of events) {
+      const data = yield* parse(event)
       if (data) return data
     }
   })
