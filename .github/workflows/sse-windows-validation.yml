@@ -1,0 +1,56 @@
+name: SSE Windows review validation
+on:
+  push:
+    branches: [sse-windows-validation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-sse:
+    if: github.repository == 'Dante-dan/opencode'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-bun
+      - name: Preserve review-only driver outside source checkout
+        run: cp packages/core/script/sse-windows-validation.mjs "$RUNNER_TEMP/sse-windows-validation.mjs"
+      - name: Build and measure exact base and PR revisions
+        run: |
+          status=0
+          mkdir -p "$GITHUB_WORKSPACE/qa-evidence"
+          for label in base head; do
+            if [ "$label" = base ]; then
+              revision=3c61484f5850bd9b267cb76590aeb74a1165ef0d
+            else
+              revision=13753bc8cef747b513f09f187793e8a8f8a62732
+            fi
+            git checkout --detach "$revision"
+            if ! (cd packages/cli && bun run script/build.ts --single --skip-install --outdir="dist/sse-qa-$label"); then
+              echo "build failed: $label $revision" > "qa-evidence/$label-build-failed.txt"
+              status=1
+              continue
+            fi
+            if ! bun "$RUNNER_TEMP/sse-windows-validation.mjs" "$GITHUB_WORKSPACE/packages/cli/dist/sse-qa-$label/cli-windows-x64/bin/opencode.exe" "$label" "$GITHUB_WORKSPACE/qa-evidence" "$GITHUB_WORKSPACE"; then
+              status=1
+            fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sse-windows-review-evidence
+          path: qa-evidence
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sse-windows-candidate-cli
+          path: packages/cli/dist/sse-qa-head/cli-windows-x64/bin
+          retention-days: 14
+          if-no-files-found: warn
