@@ -39,13 +39,13 @@ export const Plugin = define({
         const roots = config.compatibility ? yield* config.compatibility() : { claude: [], agents: [] }
         const directories = [...roots.claude, ...roots.agents].map((root) => path.join(root, "skills"))
         const loaded = new Map<Skill.ID, Skill.Info>()
+        const visited = new Set<string>()
         for (const directory of directories) {
           const resolved = yield* fs.realPath(directory).pipe(Effect.orElseSucceed(() => undefined))
-          if (!resolved) continue
+          if (!resolved || visited.has(resolved)) continue
+          visited.add(resolved)
           yield* watch(resolved, "directory")
-          const files = yield* fs
-            .scan("{*.md,**/SKILL.md}", { cwd: resolved, absolute: true, include: "file", symlink: true, dot: true })
-            .pipe(Effect.orElseSucceed(() => [] as string[]))
+          const files = yield* SkillFile.scan(fs, resolved)
           for (const filepath of files.toSorted()) {
             const content = yield* fs.readFileStringSafe(filepath).pipe(Effect.orElseSucceed(() => undefined))
             if (!content) continue

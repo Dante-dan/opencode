@@ -335,6 +335,71 @@ describe("ConfigSkillPlugin.Plugin", () => {
     ),
   )
 
+  for (const mode of ["configured", "compatibility"] as const) {
+    it.live(`loads ${mode} skill roots sharing a symlink cycle`, () =>
+      Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+        Effect.flatMap((tmp) =>
+          Effect.gen(function* () {
+            const shared = path.join(tmp.path, "shared")
+            const target = path.join(tmp.path, "target", "review")
+            const roots = [path.join(tmp.path, "claude"), path.join(tmp.path, "agents")]
+            yield* Effect.promise(async () => {
+              await fs.mkdir(shared, { recursive: true })
+              await fs.mkdir(path.join(target, ".claude", "skills"), { recursive: true })
+              await fs.writeFile(path.join(target, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n# review")
+              const type = process.platform === "win32" ? "junction" : undefined
+              await fs.symlink(target, path.join(target, ".claude", "skills", "review"), type)
+              await fs.symlink(target, path.join(shared, "review"), type)
+              await fs.mkdir(path.join(shared, "nested", "deploy"), { recursive: true })
+              await write(path.join(shared, "nested"), "deploy", "Deploy")
+              await fs.writeFile(path.join(shared, "flat.md"), "# Flat")
+              await fs.writeFile(path.join(shared, "nested", "ignored.md"), "# Ignored")
+              for (const root of roots) {
+                await fs.mkdir(root, { recursive: true })
+                await fs.symlink(shared, path.join(root, "skills"), type)
+              }
+            })
+            const filesystem = yield* FSUtil.Service
+            const reads: string[] = []
+            const skill = yield* startEntries(
+              mode === "configured"
+                ? [
+                    new Document({
+                      type: "document",
+                      info: decode({ skills: roots.map((root) => path.join(root, "skills")) }),
+                    }),
+                  ]
+                : [],
+              tmp.path,
+              tmp.path,
+              emptyDiscovery,
+              mode === "compatibility"
+                ? { claude: [AbsolutePath.make(roots[0])], agents: [AbsolutePath.make(roots[1])] }
+                : { claude: [], agents: [] },
+            ).pipe(
+              Effect.provideService(FSUtil.Service, {
+                ...filesystem,
+                readFileStringSafe: (file) => {
+                  reads.push(file)
+                  return filesystem.readFileStringSafe(file)
+                },
+              }),
+            )
+            expect(reads).toHaveLength(mode === "compatibility" ? 3 : 6)
+            expect((yield* skill.list()).map((item) => item.id).toSorted()).toEqual([
+              Skill.ID.make("deploy"),
+              Skill.ID.make("flat"),
+              Skill.ID.make("review"),
+            ])
+            expect((yield* skill.list()).find((item) => item.id === "review")?.path).not.toContain(
+              path.join(".claude", "skills"),
+            )
+          }),
+        ),
+      ),
+    )
+  }
+
   it.live("watches canonical directories behind symlinked skills", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>

@@ -1,7 +1,8 @@
 export * as SkillFile from "./skill-file.js"
 
 import path from "path"
-import { Result, Schema, type SchemaIssue, SchemaParser } from "effect"
+import { Effect, Result, Schema, type SchemaIssue, SchemaParser } from "effect"
+import { FSUtil } from "@opencode/util/fs-util"
 import { ConfigMarkdown } from "../markdown.js"
 import { AbsolutePath } from "../../schema.js"
 import { Skill } from "../../skill.js"
@@ -61,3 +62,33 @@ export function parse(directory: string, filepath: string, content: string): Par
     },
   }
 }
+
+// Follow symlinked skills, but never expand the same physical directory twice.
+export const scan = Effect.fn("SkillFile.scan")(function* (fs: FSUtil.Interface, directory: string) {
+  const pending = [directory]
+  const visited = new Set<string>()
+  const files: string[] = []
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    const resolved = yield* fs.realPath(current).pipe(Effect.orElseSucceed(() => undefined))
+    if (!resolved || visited.has(resolved)) continue
+    visited.add(resolved)
+    const entries = yield* fs.readDirectoryEntries(current).pipe(Effect.orElseSucceed(() => []))
+    for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+      const filepath = path.join(current, entry.name)
+      const type =
+        entry.type === "symlink"
+          ? (yield* fs.stat(filepath).pipe(Effect.orElseSucceed(() => undefined)))?.type
+          : entry.type === "directory"
+            ? "Directory"
+            : entry.type === "file"
+              ? "File"
+              : undefined
+      if (type === "Directory") pending.push(filepath)
+      if (type === "File" && (entry.name === "SKILL.md" || (current === directory && entry.name.endsWith(".md")))) {
+        files.push(filepath)
+      }
+    }
+  }
+  return files
+})
