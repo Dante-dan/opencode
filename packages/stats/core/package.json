@@ -23,6 +23,7 @@
     "db:push": "drizzle-kit push --config=drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config=drizzle.config.ts",
     "honeycomb:backfill": "bun src/honeycomb-backfill.ts",
+    "test": "bun test --only-failures",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
