@@ -1,0 +1,1 @@
+OpenCode #56150: macOS arm64 / Bun1.4.2 / opencode-drive2.3.0. Source45e03cd0188f6ad47a39f4f1218708103b58a48a. Captured using the original reproduction script from issuecomment6220020740. Ctrl+C leaves the busy prompt open; completion navigates to demo-wt. Images visually inspected.
