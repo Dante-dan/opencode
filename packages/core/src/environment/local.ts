@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import { Effect } from "effect"
+import os from "node:os"
+import { Effect, Stream } from "effect"
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import type { Driver } from "./driver.js"
 import { Failed, NotFound, WrongKind, type FileInfo, type FilesImpl, type FileType } from "./files.js"
@@ -16,6 +17,16 @@ import { Failed, NotFound, WrongKind, type FileInfo, type FilesImpl, type FileTy
  */
 export const makeLocalDriver = (spawner: ChildProcessSpawner["Service"]): Driver => {
   const overrides: FilesImpl = {
+    tempDirectory: Effect.sync(() => os.tmpdir()),
+    writeStream: (value, bytes) =>
+      Effect.acquireUseRelease(
+        attempt(value, async () => {
+          await fs.mkdir(path.dirname(value), { recursive: true })
+          return fs.open(value, "w")
+        }),
+        (handle) => Stream.runForEach(bytes, (chunk) => attempt(value, () => handle.writeFile(chunk))),
+        (handle) => attempt(value, () => handle.close()).pipe(Effect.orDie),
+      ),
     read: (value, range) =>
       Effect.gen(function* () {
         const info = yield* stat(value, true)

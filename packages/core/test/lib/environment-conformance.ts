@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Stream } from "effect"
 import { Failed, NotFound, WrongKind, type Files } from "@opencode/core/environment/index"
 
 export interface EnvironmentHarness {
@@ -37,6 +37,17 @@ export const environmentConformance = <E>(
   const suite = skip ? describe.skip : describe
 
   suite(name, () => {
+    check("streams chunks to a file and truncates existing content", (harness) =>
+      Effect.gen(function* () {
+        const target = `${harness.root}/nested/capture.out`
+        yield* harness.files.writeStream(target, Stream.make(bytes("hello"), bytes(" world")))
+        expect(text((yield* harness.files.read(target)).bytes)).toBe("hello world")
+        expect((yield* harness.files.stat(target)).size).toBe(11)
+        yield* harness.files.writeStream(target, Stream.empty)
+        expect((yield* harness.files.stat(target)).size).toBe(0)
+      }),
+    )
+
     check("writes, stats, and reads a file with its info", (harness) =>
       Effect.gen(function* () {
         const target = `${harness.root}/hello.txt`

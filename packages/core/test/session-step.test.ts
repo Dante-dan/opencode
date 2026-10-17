@@ -22,12 +22,18 @@ import { Money } from "@opencode/schema/money"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { asc, eq } from "drizzle-orm"
 import { Effect, Exit, Layer } from "effect"
+import { Environment } from "@opencode/core/environment/index"
+import { Location } from "@opencode/core/location"
+import { hostEnvironmentLayer } from "./fixture/environment"
+import { tempLocationLayer } from "./fixture/location"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
   Layer.merge(
     AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, SessionProjector.node, ToolOutput.node]), [
       Bus.node.replace(Bus.configured({ persist: true })),
+      Location.node.replace(tempLocationLayer),
+      Environment.node.replace(hostEnvironmentLayer),
     ]),
     TestLLM.testLayer(),
   ),

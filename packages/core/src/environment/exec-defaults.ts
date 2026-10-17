@@ -75,14 +75,14 @@ export const execDefaults = (spawner: ChildProcessSpawner["Service"]): FilesImpl
     path: string,
     script: string,
     args: ReadonlyArray<string> = [],
-    stdin?: Uint8Array,
+    stdin?: Stream.Stream<Uint8Array>,
   ): Effect.Effect<Result, Failed> =>
     Effect.scoped(
       Effect.gen(function* () {
         const command = ChildProcess.make("sh", ["-c", script, "sh", path, ...args], {
           env: { LC_ALL: "C" },
           extendEnv: true,
-          stdin: stdin === undefined ? undefined : Stream.make(stdin),
+          stdin,
         })
         const handle = yield* spawner.spawn(command).pipe(Effect.mapError((cause) => new Failed({ path, cause })))
         const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -117,6 +117,13 @@ export const execDefaults = (spawner: ChildProcessSpawner["Service"]): FilesImpl
     result.exitCode === 0 ? Effect.void : Effect.fail(processFailure(path, result))
 
   return {
+    tempDirectory: run("", `printf '%s' "\${TMPDIR:-/tmp}"`).pipe(
+      Effect.flatMap((result) => complete("", result).pipe(Effect.as(new TextDecoder().decode(result.stdout)))),
+    ),
+    writeStream: (path, bytes) =>
+      run(path, `mkdir -p "$(dirname "$1")" && cat > "$1"`, [], bytes).pipe(
+        Effect.flatMap((result) => complete(path, result)),
+      ),
     stat: (path) => run(path, statScript).pipe(Effect.flatMap((result) => classifyPlain(path, result, parseInfo))),
     read: (path, range) =>
       run(
@@ -136,7 +143,7 @@ export const execDefaults = (spawner: ChildProcessSpawner["Service"]): FilesImpl
         ),
       ),
     write: (path, bytes) =>
-      run(path, `mkdir -p "$(dirname "$1")" && cat > "$1"`, [], bytes).pipe(
+      run(path, `mkdir -p "$(dirname "$1")" && cat > "$1"`, [], Stream.make(bytes)).pipe(
         Effect.flatMap((result) => complete(path, result)),
       ),
     list: (path) => run(path, listScript).pipe(Effect.flatMap((result) => classify(path, result, parseList))),

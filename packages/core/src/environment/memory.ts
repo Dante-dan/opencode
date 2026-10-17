@@ -1,5 +1,5 @@
 import path from "node:path"
-import { Effect, PlatformError } from "effect"
+import { Effect, PlatformError, Stream } from "effect"
 import { make } from "effect/process/ChildProcessSpawner"
 import type { Driver } from "./driver.js"
 import { Failed, NotFound, WrongKind, type FileInfo, type FilesImpl, type FileType } from "./files.js"
@@ -61,6 +61,11 @@ export const makeMemoryDriver = (): MemoryDriver => {
   }
   const failed = (value: string, cause: unknown) => new Failed({ path: value, cause })
   const overrides: FilesImpl = {
+    tempDirectory: Effect.succeed("/tmp"),
+    writeStream: (value, bytes) =>
+      Stream.runCollect(bytes).pipe(
+        Effect.flatMap((chunks) => overrides.write(value, Buffer.concat(Array.from(chunks)))),
+      ),
     stat: (value) =>
       Effect.suspend(() => {
         const node = lookup(value)

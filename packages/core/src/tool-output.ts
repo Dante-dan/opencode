@@ -2,13 +2,15 @@ export * as ToolOutput from "./tool-output.js"
 
 import path from "path"
 import type { Tool } from "./tool.js"
-import { Context, Duration, Effect, Layer, Schedule } from "effect"
+import { Context, Duration, Effect, Layer, Schedule, Scope } from "effect"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import { Identifier } from "@opencode/schema/identifier"
 import { FileRetention } from "./file-retention.js"
 import { State } from "./state.js"
+import { Environment } from "./environment/index.js"
+import { Location } from "./location.js"
 
 export const MAX_LINES = 2_000
 export const MAX_BYTES = 50 * 1024 // 50 KiB
@@ -52,7 +54,25 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
-    const directory = path.join(global.data, DIRECTORY)
+    const environment = yield* Environment.Service
+    const location = yield* Location.Service
+    const scope = yield* Scope.Scope
+    const directory = yield* Effect.cached(
+      Effect.gen(function* () {
+        const value = path.join(
+          location.workspaceID === undefined
+            ? global.data
+            : path.join(yield* environment.files.tempDirectory, "opencode"),
+          DIRECTORY,
+        )
+        if (location.workspaceID !== undefined)
+          yield* FileRetention.cleanupEnvironment(environment.files, value, RETENTION).pipe(
+            Effect.repeat(Schedule.spaced(Duration.hours(1))),
+            Effect.forkIn(scope),
+          )
+        return value
+      }).pipe(Effect.orDie),
+    )
     const state = State.create<Limits, Editor>({
       name: "tool-output",
       initial: () => ({ maxLines: MAX_LINES, maxBytes: MAX_BYTES }),
@@ -83,9 +103,9 @@ const layer = Layer.effect(
         kept.push(line)
         bytes += size
       }
-      const file = path.join(directory, fileName())
-      yield* fs.ensureDir(directory).pipe(Effect.orDie)
-      yield* fs.writeFileString(file, text).pipe(Effect.orDie)
+      const file = path.join(yield* directory, fileName())
+      yield* environment.files.mkdir(yield* directory).pipe(Effect.orDie)
+      yield* environment.files.write(file, new TextEncoder().encode(text)).pipe(Effect.orDie)
       const shown = kept.length > 0 ? `lines 1-${kept.length}` : "0 lines"
       const marker = `[showing ${shown} of ${lines.length}; full output saved to ${file}]`
       const bounded: Tool.Content[] = []
@@ -121,7 +141,14 @@ const layer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       truncate,
-      cleanup: () => cleanup(fs, directory),
+      cleanup: () =>
+        directory.pipe(
+          Effect.flatMap((value) =>
+            location.workspaceID === undefined
+              ? cleanup(fs, value)
+              : FileRetention.cleanupEnvironment(environment.files, value, RETENTION),
+          ),
+        ),
     })
   }),
 )
@@ -146,5 +173,5 @@ const cleanupNode = makeGlobalNode({
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [FSUtil.node, Global.node, cleanupNode],
+  deps: [FSUtil.node, Global.node, Environment.node, Location.node, cleanupNode],
 })

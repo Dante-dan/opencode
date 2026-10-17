@@ -60,7 +60,7 @@ import { advance, drain } from "./lib/clock"
 import { testEffect } from "./lib/effect"
 import { registerIntegrationPolicy } from "./fixture/policy"
 import { imagePassthrough } from "./lib/image"
-import { location } from "./fixture/location"
+import { location, tempLocationLayer } from "./fixture/location"
 import { tmpdirScoped } from "./fixture/tmpdir"
 import { hostEnvironmentLayer, recordingEnvironmentLayer } from "./fixture/environment"
 import {
@@ -1461,7 +1461,12 @@ it.live("discovers and reads MCP resources through Code Mode", () =>
         'const resource = await tools.opencode.read_mcp_resource({ server: "resources", uri: "docs://readme" }); return resource.contents[0].text',
       )
       const bounded = yield* ToolOutput.Service.use((output) => output.truncate(large)).pipe(
-        Effect.provide(AppNodeBuilder.build(ToolOutput.node)),
+        Effect.provide(
+          AppNodeBuilder.build(ToolOutput.node, [
+            Location.node.replace(tempLocationLayer),
+            Environment.node.replace(hostEnvironmentLayer),
+          ]),
+        ),
       )
       expect(bounded.metadata?.truncated).toBe(true)
       expect(bounded.content[0]).toMatchObject({ type: "text" })

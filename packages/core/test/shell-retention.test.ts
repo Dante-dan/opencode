@@ -1,4 +1,7 @@
 import { expect } from "bun:test"
+import { existsSync } from "node:fs"
+import { ToolOutput } from "@opencode/core/tool-output"
+import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Deferred, Effect, Fiber, Layer, Queue, Scope, Sink, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { ExitCode, makeHandle, ProcessId } from "effect/process/ChildProcessSpawner"
@@ -26,7 +29,7 @@ it.live("eviction makes progress past an already-removed shell", () =>
         const scope = yield* Scope.Scope
         return Environment.Service.of({
           ...host,
-          spawner: ChildProcessSpawner.make(() =>
+          spawner: ChildProcessSpawner.make((invocation) =>
             Effect.gen(function* () {
               const exited = yield* Deferred.make<ExitCode>()
               const observer = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>()
@@ -39,7 +42,13 @@ it.live("eviction makes progress past an already-removed shell", () =>
                   yield* Fiber.join(fiber).pipe(Effect.orDie)
                 }),
               )
-              const output = Stream.succeed(Buffer.from("hello"))
+              const output = Stream.succeed(Buffer.from("hello")).pipe(
+                Stream.concat(
+                  invocation._tag === "StandardCommand" && invocation.args.includes("removed")
+                    ? Stream.never
+                    : Stream.empty,
+                ),
+              )
               return makeHandle({
                 pid: ProcessId(1),
                 exitCode: Effect.withFiber((fiber) =>
@@ -143,5 +152,113 @@ it.live("does not inherit host process.env when creating a shell in a workspace-
       TERM: "xterm-256color",
       OPENCODE_TERMINAL: "1",
     })
+  }),
+)
+
+it.live("keeps large shell and tool output in the workspace filesystem and honors its temporary storage", () =>
+  Effect.gen(function* () {
+    const memory = Environment.makeMemoryDriver()
+    const temporary: string[] = []
+    const storage = Environment.makeFiles(memory)
+    const files = Environment.makeFiles({
+      ...memory,
+      overrides: {
+        ...memory.overrides,
+        stat: (file) =>
+          storage.stat(file).pipe(
+            Effect.map((info) => ({
+              ...info,
+              mtimeMs: file.endsWith(".expired")
+                ? Date.now() - 8 * 24 * 60 * 60 * 1_000
+                : file.endsWith(".epoch")
+                  ? 0
+                  : info.mtimeMs,
+            })),
+          ),
+        tempDirectory: Effect.sync(() => {
+          temporary.push("requested")
+          return "/workspace/output-cache"
+        }),
+      },
+    })
+    const bytes = Buffer.from("123456789\n".repeat(200_000))
+    const output = Stream.fromIterable([bytes.subarray(0, 100), bytes.subarray(100)])
+    const environment = Layer.succeed(
+      Environment.Service,
+      Environment.Service.of({
+        files,
+        spawner: ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeHandle({
+              pid: ProcessId(1),
+              exitCode: Effect.succeed(ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              stdout: output,
+              stderr: Stream.empty,
+              all: output,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          ),
+        ),
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const shell = yield* Shell.Service
+      const tool = yield* ToolOutput.Service
+      yield* tool.truncate({ content: [{ type: "text", text: "small output" }] })
+      expect(temporary).toEqual([])
+      const info = yield* shell.create({ shell: "sh", command: "large output", timeout: 0 })
+      const result = yield* shell.result(info)
+      expect(result.capture?.truncated).toBe(true)
+      expect(info.file.startsWith("/workspace/output-cache/")).toBe(true)
+      expect(existsSync(info.file)).toBe(false)
+      expect((yield* files.stat(info.file)).size).toBe(bytes.length)
+      expect(Buffer.from((yield* files.read(info.file)).bytes)).toEqual(bytes)
+      expect(yield* shell.output(info.id, { cursor: 98, limit: 5 })).toMatchObject({
+        output: bytes.subarray(98, 103).toString(),
+        cursor: 103,
+        size: bytes.length,
+      })
+      const truncated = yield* tool.truncate({ content: [{ type: "text", text: bytes.toString() }] })
+      const file = truncated.metadata?.outputPath
+      expect(typeof file).toBe("string")
+      if (typeof file !== "string") return
+      expect(file.startsWith("/workspace/output-cache/")).toBe(true)
+      expect(existsSync(file)).toBe(false)
+      expect(Buffer.from((yield* files.read(file)).bytes)).toEqual(bytes)
+      yield* files.write(file + ".expired", bytes)
+      yield* files.write(file + ".epoch", bytes)
+      yield* tool.cleanup()
+      expect(yield* files.stat(file + ".expired").pipe(Effect.flip)).toBeInstanceOf(Environment.NotFound)
+      expect((yield* files.stat(file + ".epoch")).size).toBe(bytes.length)
+      expect((yield* files.stat(file)).size).toBe(bytes.length)
+      yield* shell.remove(info.id)
+      expect(yield* files.stat(info.file).pipe(Effect.flip)).toBeInstanceOf(Environment.NotFound)
+    }).pipe(
+      Effect.provide(
+        AppNodeBuilder.build(LayerNode.group([Shell.node, ToolOutput.node]), [
+          Location.node.replace(
+            Layer.succeed(
+              Location.Service,
+              Location.Service.of(
+                location(
+                  Location.Ref.make({
+                    directory: AbsolutePath.make("/workspace"),
+                    workspaceID: Workspace.ID.make("wrk_output"),
+                  }),
+                ),
+              ),
+            ),
+          ),
+          Global.node.replace(tempGlobalLayer),
+          Config.node.replace(Config.testLayer()),
+          Environment.node.replace(environment),
+        ]),
+      ),
+    )
   }),
 )

@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Stream } from "effect"
 
 export const FileType = Schema.Literals(["file", "directory", "symlink", "other"])
 export type FileType = typeof FileType.Type
@@ -39,6 +39,10 @@ export interface FilesImpl {
     path: string,
     range?: { readonly offset: number; readonly length: number },
   ) => Effect.Effect<{ readonly info: FileInfo; readonly bytes: Uint8Array }, NotFound | WrongKind | Failed>
+  /** Stream capture without collecting the full output in the host process. */
+  readonly writeStream: (path: string, bytes: Stream.Stream<Uint8Array>) => Effect.Effect<void, Failed>
+  /** Temporary storage in this filesystem; drivers may override its placement. */
+  readonly tempDirectory: Effect.Effect<string, Failed>
   readonly write: (path: string, bytes: Uint8Array) => Effect.Effect<void, Failed>
   /** Describes the path entry itself, so a final symlink is reported as `symlink` rather than followed. */
   readonly stat: (path: string) => Effect.Effect<FileInfo, NotFound | Failed>

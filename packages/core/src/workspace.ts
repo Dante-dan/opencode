@@ -306,6 +306,8 @@ const layer = (options: Options) =>
               ),
             )
           const overrides: FilesImpl = {
+            tempDirectory: withFiles("", (files) => files.tempDirectory),
+            writeStream: (path, bytes) => withFiles(path, (files) => files.writeStream(path, bytes)),
             read: (path, range) => withFiles(path, (files) => files.read(path, range)),
             write: (path, bytes) => withFiles(path, (files) => files.write(path, bytes)),
             stat: (path) => withFiles(path, (files) => files.stat(path)),
