@@ -78,6 +78,32 @@ describe("ConfigPolicyPlugin.Plugin", () => {
     )
   }
 
+  it.effect("blocks renamed Code Mode after request aliases and repair hooks resolve", () =>
+    Effect.gen(function* () {
+      yield* addPlugin([document(tool("deny", "execute:*"))])
+      const registry = yield* Tool.Service
+      const hooks = yield* PluginHooks.Service
+      const snapshot = yield* registry.snapshot()
+      const definition = snapshot.definitions.find((tool) => tool.name === "execute")!
+      yield* hooks.register("tool", "execute.before", (event) =>
+        Effect.sync(() => {
+          if (event.tool === "repair_js") event.tool = "run_js"
+        }),
+      )
+      for (const name of ["run_js", "repair_js"]) {
+        const error = yield* snapshot
+          .execute({
+            ...toolIdentity,
+            sessionID: Session.ID.make("ses_policy"),
+            definitions: new Map([["run_js", definition]]),
+            call: { type: "tool-call", id: "call_alias", name, input: { code: "return 2" } },
+          })
+          .pipe(Effect.flip)
+        expect(error.message).toBe("Blocked by configuration policy")
+      }
+    }),
+  )
+
   it.effect("applies ordered and organization Code Mode policies at execution time", () =>
     Effect.gen(function* () {
       yield* addPlugin([document(tool("deny", "*"), tool("allow", "execute:*"))])
