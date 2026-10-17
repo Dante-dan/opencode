@@ -2,7 +2,7 @@ export * as ToolOutput from "./tool-output.js"
 
 import path from "path"
 import type { Tool } from "./tool.js"
-import { Context, Duration, Effect, Layer, Schedule, Scope } from "effect"
+import { Context, Duration, Effect, Exit, Layer, Schedule } from "effect"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
@@ -56,8 +56,7 @@ const layer = Layer.effect(
     const global = yield* Global.Service
     const environment = yield* Environment.Service
     const location = yield* Location.Service
-    const scope = yield* Scope.Scope
-    const directory = yield* Effect.cached(
+    const directory = yield* Effect.cachedWithTTL(
       Effect.gen(function* () {
         const value = path.join(
           location.workspaceID === undefined
@@ -66,12 +65,10 @@ const layer = Layer.effect(
           DIRECTORY,
         )
         if (location.workspaceID !== undefined)
-          yield* FileRetention.cleanupEnvironment(environment.files, value, RETENTION).pipe(
-            Effect.repeat(Schedule.spaced(Duration.hours(1))),
-            Effect.forkIn(scope),
-          )
+          yield* FileRetention.cleanupEnvironment(environment.files, value, RETENTION)
         return value
-      }).pipe(Effect.orDie),
+      }),
+      (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
     )
     const state = State.create<Limits, Editor>({
       name: "tool-output",
@@ -103,8 +100,8 @@ const layer = Layer.effect(
         kept.push(line)
         bytes += size
       }
-      const file = path.join(yield* directory, fileName())
-      yield* environment.files.mkdir(yield* directory).pipe(Effect.orDie)
+      const file = path.join(yield* directory.pipe(Effect.orDie), fileName())
+      yield* environment.files.mkdir(yield* directory.pipe(Effect.orDie)).pipe(Effect.orDie)
       yield* environment.files.write(file, new TextEncoder().encode(text)).pipe(Effect.orDie)
       const shown = kept.length > 0 ? `lines 1-${kept.length}` : "0 lines"
       const marker = `[showing ${shown} of ${lines.length}; full output saved to ${file}]`
@@ -143,6 +140,7 @@ const layer = Layer.effect(
       truncate,
       cleanup: () =>
         directory.pipe(
+          Effect.orDie,
           Effect.flatMap((value) =>
             location.workspaceID === undefined
               ? cleanup(fs, value)

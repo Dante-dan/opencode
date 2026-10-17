@@ -2,7 +2,7 @@ import { expect } from "bun:test"
 import { existsSync } from "node:fs"
 import { ToolOutput } from "@opencode/core/tool-output"
 import { LayerNode } from "@opencode/util/effect/layer-node"
-import { Deferred, Effect, Fiber, Layer, Queue, Scope, Sink, Stream } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, Queue, Scope, Sink, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { ExitCode, makeHandle, ProcessId } from "effect/process/ChildProcessSpawner"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -12,6 +12,7 @@ import { Location } from "@opencode/core/location"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Shell } from "@opencode/core/shell"
 import { Workspace } from "@opencode/core/workspace"
+import { AppProcess } from "@opencode/util/process"
 import { Global } from "@opencode/util/global"
 import { hostEnvironmentLayer } from "./fixture/environment"
 import { tempGlobalLayer } from "./fixture/global"
@@ -159,6 +160,8 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
   Effect.gen(function* () {
     const memory = Environment.makeMemoryDriver()
     const temporary: string[] = []
+    const directories = new Set<string>()
+    let writeFailed = false
     const storage = Environment.makeFiles(memory)
     const files = Environment.makeFiles({
       ...memory,
@@ -175,10 +178,24 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
                   : info.mtimeMs,
             })),
           ),
-        tempDirectory: Effect.sync(() => {
+        tempDirectory: Effect.suspend(() => {
           temporary.push("requested")
-          return "/workspace/output-cache"
+          return temporary.length === 1 || temporary.length === 4
+            ? Effect.fail(new Environment.Failed({ path: "/workspace", cause: "workspace waking" }))
+            : Effect.succeed("/workspace/output-cache")
         }),
+        mkdir: (directory) =>
+          Effect.suspend(() => {
+            if (directories.has(directory)) return storage.mkdir(directory)
+            directories.add(directory)
+            return Effect.fail(new Environment.Failed({ path: directory, cause: "connection interrupted" }))
+          }),
+        write: (file, bytes) =>
+          Effect.suspend(() => {
+            if (writeFailed || bytes.length !== 0) return storage.write(file, bytes)
+            writeFailed = true
+            return Effect.fail(new Environment.Failed({ path: file, cause: "connection interrupted" }))
+          }),
       },
     })
     const bytes = Buffer.from("123456789\n".repeat(200_000))
@@ -211,6 +228,11 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
       const tool = yield* ToolOutput.Service
       yield* tool.truncate({ content: [{ type: "text", text: "small output" }] })
       expect(temporary).toEqual([])
+      // Wakeup, mkdir and initial write failures must remain recoverable on the same service.
+      for (let attempt = 0; attempt < 3; attempt++)
+        expect(
+          yield* shell.create({ shell: "sh", command: "large output", timeout: 0 }).pipe(Effect.flip),
+        ).toBeInstanceOf(AppProcess.AppProcessError)
       const info = yield* shell.create({ shell: "sh", command: "large output", timeout: 0 })
       const result = yield* shell.result(info)
       expect(result.capture?.truncated).toBe(true)
@@ -223,6 +245,12 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
         cursor: 103,
         size: bytes.length,
       })
+      for (let attempt = 0; attempt < 2; attempt++)
+        expect(
+          Exit.isFailure(
+            yield* tool.truncate({ content: [{ type: "text", text: bytes.toString() }] }).pipe(Effect.exit),
+          ),
+        ).toBe(true)
       const truncated = yield* tool.truncate({ content: [{ type: "text", text: bytes.toString() }] })
       const file = truncated.metadata?.outputPath
       expect(typeof file).toBe("string")

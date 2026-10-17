@@ -1,7 +1,7 @@
 export * as Shell from "./shell.js"
 
 import path from "path"
-import { Context, Deferred, Duration, Effect, Fiber, Latch, Layer, Schema, Schedule, Scope, Stream } from "effect"
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Latch, Layer, Schema, Schedule, Stream } from "effect"
 import { ChildProcess } from "effect/process"
 import { produce } from "immer"
 import { Shell } from "@opencode/schema/shell"
@@ -134,8 +134,7 @@ const layer = () =>
       const commands = new Map<Shell.ID, Active>()
       const exitOrder: Shell.ID[] = []
 
-      const scope = yield* Scope.Scope
-      const outputDir = yield* Effect.cached(
+      const outputDir = yield* Effect.cachedWithTTL(
         Effect.gen(function* () {
           const directory = path.join(
             location.workspaceID === undefined
@@ -144,14 +143,12 @@ const layer = () =>
             DIRECTORY,
             location.project.id,
           )
-          yield* environment.files.mkdir(directory).pipe(Effect.orDie)
+          yield* environment.files.mkdir(directory)
           if (location.workspaceID !== undefined)
-            yield* FileRetention.cleanupEnvironment(environment.files, directory, RETENTION).pipe(
-              Effect.repeat(Schedule.spaced(Duration.hours(1))),
-              Effect.forkIn(scope),
-            )
+            yield* FileRetention.cleanupEnvironment(environment.files, directory, RETENTION)
           return directory
-        }).pipe(Effect.orDie),
+        }),
+        (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
       )
 
       yield* Effect.addFinalizer(() =>
@@ -283,8 +280,11 @@ const layer = () =>
 
         const id = Shell.ID.ascending()
         const args = ShellSelect.args(invocation.shell, invocation.command)
-        const file = path.join(yield* outputDir, `${id}.out`)
-        yield* environment.files.write(file, new Uint8Array()).pipe(Effect.orDie)
+        const file = yield* Effect.gen(function* () {
+          const file = path.join(yield* outputDir, `${id}.out`)
+          yield* environment.files.write(file, new Uint8Array())
+          return file
+        }).pipe(Effect.mapError((cause) => new AppProcess.AppProcessError({ command: invocation.command, cause })))
 
         const info: Info = {
           id,
