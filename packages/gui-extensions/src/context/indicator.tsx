@@ -64,10 +64,23 @@ export function SessionContextUsage(props: {
     }
   })
 
+  // Compaction invalidates the last measurement without emptying the context.
+  const unmeasured = createMemo(() => {
+    if (context()) return false
+    const boundary = info()?.revert?.messageID
+    const end = boundary ? messages().findIndex((message) => message.id === boundary) : messages().length
+
+    return messages().some(
+      (message, index) => index < end && message.type === "compaction" && message.status === "completed",
+    )
+  })
+
   const tokens = createMemo(() =>
-    new Intl.NumberFormat(i18n.locale(), { notation: "compact", maximumFractionDigits: 0 })
-      .format(context()?.total ?? 0)
-      .toLocaleLowerCase(i18n.locale()),
+    unmeasured()
+      ? "—"
+      : new Intl.NumberFormat(i18n.locale(), { notation: "compact", maximumFractionDigits: 0 })
+          .format(context()?.total ?? 0)
+          .toLocaleLowerCase(i18n.locale()),
   )
 
   // A root session's cost includes its subagent sessions, as in the TUI.
@@ -92,18 +105,20 @@ export function SessionContextUsage(props: {
   }
 
   const circle = () => (
-    <div class="flex items-center justify-center">
-      <ProgressCircle
-        appearance="indicator"
-        size={16}
-        strokeWidth={2}
-        percentage={context()?.usage ?? 0}
-        style={{
-          "--progress-circle-background": "var(--v2-background-bg-layer-04, var(--border-weak-base))",
-          "--progress-circle-background-overlay": "var(--v2-overlay-simple-overlay-pressed, transparent)",
-          "--progress-circle-progress": "var(--v2-icon-icon-base, var(--icon-base))",
-        }}
-      />
+    <div class="flex size-4 items-center justify-center">
+      <Show when={!unmeasured()} fallback={<span>—</span>}>
+        <ProgressCircle
+          appearance="indicator"
+          size={16}
+          strokeWidth={2}
+          percentage={context()?.usage ?? 0}
+          style={{
+            "--progress-circle-background": "var(--v2-background-bg-layer-04, var(--border-weak-base))",
+            "--progress-circle-background-overlay": "var(--v2-overlay-simple-overlay-pressed, transparent)",
+            "--progress-circle-progress": "var(--v2-icon-icon-base, var(--icon-base))",
+          }}
+        />
+      </Show>
     </div>
   )
 
@@ -118,8 +133,11 @@ export function SessionContextUsage(props: {
       <Show when={showCost()}>
         <ContextTooltipRow name={ctx.t("usage.cost")} value={cost()} />
       </Show>
-      <ContextTooltipRow name={ctx.t("usage.usage")} value={`${context()?.usage ?? 0}%`} />
-      <ContextTooltipRow name={ctx.t("usage.tokens")} value={context()?.total.toLocaleString(i18n.locale()) ?? "0"} />
+      <ContextTooltipRow name={ctx.t("usage.usage")} value={unmeasured() ? "—" : `${context()?.usage ?? 0}%`} />
+      <ContextTooltipRow
+        name={ctx.t("usage.tokens")}
+        value={unmeasured() ? "—" : (context()?.total.toLocaleString(i18n.locale()) ?? "0")}
+      />
     </div>
   )
 
