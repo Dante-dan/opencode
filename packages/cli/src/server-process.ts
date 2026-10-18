@@ -30,8 +30,12 @@ export type Options = {
 
 // The process effect lives until server shutdown; tracing it would parent every request to one process-lifetime trace.
 export const run = Effect.fnUntraced(function* (options: Options) {
-  // Server plugins can import OpenTUI too; share the host runtime before loading them.
-  yield* Effect.promise(() => import("@opencode/tui/plugin/runtime"))
+  if (typeof Bun !== "undefined") {
+    const { createRuntimePlugin } = yield* Effect.promise(() => import("@opentui/core/runtime-plugin"))
+    const { provides } = yield* Effect.promise(() => import("@opencode/plugin/runtime"))
+    // Share OpenTUI with server plugins without installing the TUI's Solid transform.
+    Bun.plugin(createRuntimePlugin({ preserve: provides }))
+  }
   return yield* processEffect(options).pipe(
     Effect.provide(
       LayerNode.compile(LayerNode.group([Global.node, AppProcess.node]), {
