@@ -3,7 +3,7 @@ import { ProgressCircle } from "@opencode/ui/progress-circle"
 import { Button } from "@opencode/ui/button"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { useI18n } from "@opencode/ui/context/i18n"
-import { lastAssistantWithUsage } from "@opencode/client/solid"
+import { assistantUsageState } from "@opencode/client/solid"
 import { useExtension, type MountedSession } from "../sdk"
 import { catalogModel, syncCatalog } from "./catalog"
 
@@ -44,9 +44,11 @@ export function SessionContextUsage(props: {
     props.session.id ? props.session.server.data.session.get(props.session.id) : undefined,
   )
 
+  const measurement = createMemo(() => assistantUsageState(messages(), info()?.revert?.messageID))
+
   // Same step as the TUI: after the last completed compaction and before an undo boundary.
   const context = createMemo(() => {
-    const message = lastAssistantWithUsage(messages(), info()?.revert?.messageID)
+    const message = measurement().message
 
     if (!message) return
     const model = catalogModel(props.session, message.model)?.model
@@ -64,16 +66,7 @@ export function SessionContextUsage(props: {
     }
   })
 
-  // Compaction invalidates the last measurement without emptying the context.
-  const unmeasured = createMemo(() => {
-    if (context()) return false
-    const boundary = info()?.revert?.messageID
-    const end = boundary ? messages().findIndex((message) => message.id === boundary) : messages().length
-
-    return messages().some(
-      (message, index) => index < end && message.type === "compaction" && message.status === "completed",
-    )
-  })
+  const unmeasured = () => measurement().unmeasured
 
   const tokens = createMemo(() =>
     unmeasured()
