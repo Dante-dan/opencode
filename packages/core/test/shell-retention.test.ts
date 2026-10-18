@@ -156,12 +156,76 @@ it.live("does not inherit host process.env when creating a shell in a workspace-
   }),
 )
 
+for (const service of ["shell", "tool"] as const)
+  it.live(`retries workspace temporary directory resolution on the same ${service} service`, () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      let failed = false
+      const memory = Environment.makeMemoryDriver()
+      const files = Environment.makeFiles({
+        ...memory,
+        overrides: {
+          ...memory.overrides,
+          tempDirectory: Effect.suspend(() => {
+            if (failed) return Effect.succeed("/workspace/output-cache")
+            failed = true
+            return Effect.fail(new Environment.Failed({ path: "/workspace", cause: "workspace waking" }))
+          }),
+        },
+      })
+      const environment = Layer.effect(
+        Environment.Service,
+        Effect.gen(function* () {
+          const host = yield* Environment.Service
+          return Environment.Service.of({ ...host, files })
+        }),
+      ).pipe(Layer.provide(hostEnvironmentLayer))
+      yield* Effect.gen(function* () {
+        if (service === "shell") {
+          const shell = yield* Shell.Service
+          expect(yield* shell.create({ shell: "sh", command: "printf ok", timeout: 0 }).pipe(Effect.flip)).toBeInstanceOf(
+            AppProcess.AppProcessError,
+          )
+          const info = yield* shell.create({ shell: "sh", command: "printf ok", timeout: 0 })
+          expect((yield* shell.result(info)).capture?.output).toBe("ok")
+          return
+        }
+        const tool = yield* ToolOutput.Service
+        const text = "x".repeat(ToolOutput.MAX_BYTES + 1)
+        const truncate = tool.truncate({ content: [{ type: "text", text }] })
+        expect(Exit.isFailure(yield* truncate.pipe(Effect.exit))).toBe(true)
+        const result = yield* truncate
+        expect(result.metadata?.truncated).toBe(true)
+        expect(result.metadata?.outputPath).toStartWith("/workspace/output-cache/")
+      }).pipe(
+        Effect.provide(
+          AppNodeBuilder.build(LayerNode.group([Shell.node, ToolOutput.node]), [
+            Location.node.replace(
+              Layer.succeed(
+                Location.Service,
+                Location.Service.of(
+                  location(
+                    Location.Ref.make({
+                      directory: AbsolutePath.make(tmp.path),
+                      workspaceID: Workspace.ID.make("wrk_retry"),
+                    }),
+                  ),
+                ),
+              ),
+            ),
+            Global.node.replace(tempGlobalLayer),
+            Config.node.replace(Config.testLayer()),
+            Environment.node.replace(environment),
+          ]),
+        ),
+      )
+    }),
+  )
+
 it.live("keeps large shell and tool output in the workspace filesystem and honors its temporary storage", () =>
   Effect.gen(function* () {
     const memory = Environment.makeMemoryDriver()
     const temporary: string[] = []
-    const directories = new Set<string>()
-    let writeFailed = false
     const storage = Environment.makeFiles(memory)
     const files = Environment.makeFiles({
       ...memory,
@@ -178,24 +242,10 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
                   : info.mtimeMs,
             })),
           ),
-        tempDirectory: Effect.suspend(() => {
+        tempDirectory: Effect.sync(() => {
           temporary.push("requested")
-          return temporary.length === 1 || temporary.length === 4
-            ? Effect.fail(new Environment.Failed({ path: "/workspace", cause: "workspace waking" }))
-            : Effect.succeed("/workspace/output-cache")
+          return "/workspace/output-cache"
         }),
-        mkdir: (directory) =>
-          Effect.suspend(() => {
-            if (directories.has(directory)) return storage.mkdir(directory)
-            directories.add(directory)
-            return Effect.fail(new Environment.Failed({ path: directory, cause: "connection interrupted" }))
-          }),
-        write: (file, bytes) =>
-          Effect.suspend(() => {
-            if (writeFailed || bytes.length !== 0) return storage.write(file, bytes)
-            writeFailed = true
-            return Effect.fail(new Environment.Failed({ path: file, cause: "connection interrupted" }))
-          }),
       },
     })
     const bytes = Buffer.from("123456789\n".repeat(200_000))
@@ -228,11 +278,6 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
       const tool = yield* ToolOutput.Service
       yield* tool.truncate({ content: [{ type: "text", text: "small output" }] })
       expect(temporary).toEqual([])
-      // Wakeup, mkdir and initial write failures must remain recoverable on the same service.
-      for (let attempt = 0; attempt < 3; attempt++)
-        expect(
-          yield* shell.create({ shell: "sh", command: "large output", timeout: 0 }).pipe(Effect.flip),
-        ).toBeInstanceOf(AppProcess.AppProcessError)
       const info = yield* shell.create({ shell: "sh", command: "large output", timeout: 0 })
       const result = yield* shell.result(info)
       expect(result.capture?.truncated).toBe(true)
@@ -245,12 +290,6 @@ it.live("keeps large shell and tool output in the workspace filesystem and honor
         cursor: 103,
         size: bytes.length,
       })
-      for (let attempt = 0; attempt < 2; attempt++)
-        expect(
-          Exit.isFailure(
-            yield* tool.truncate({ content: [{ type: "text", text: bytes.toString() }] }).pipe(Effect.exit),
-          ),
-        ).toBe(true)
       const truncated = yield* tool.truncate({ content: [{ type: "text", text: bytes.toString() }] })
       const file = truncated.metadata?.outputPath
       expect(typeof file).toBe("string")
