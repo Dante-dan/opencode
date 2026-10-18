@@ -30,6 +30,8 @@ export type Options = {
 
 // The process effect lives until server shutdown; tracing it would parent every request to one process-lifetime trace.
 export const run = Effect.fnUntraced(function* (options: Options) {
+  // Server plugins can import OpenTUI too; share the host runtime before loading them.
+  yield* Effect.promise(() => import("@opencode/tui/plugin/runtime"))
   return yield* processEffect(options).pipe(
     Effect.provide(
       LayerNode.compile(LayerNode.group([Global.node, AppProcess.node]), {
