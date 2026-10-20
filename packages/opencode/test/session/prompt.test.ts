@@ -850,6 +850,74 @@ it.instance("loop continues when finish is tool-calls", () =>
   }),
 )
 
+unix("native subtask queued during a tool executes once after automatic compaction", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      compaction: { tail_turns: 2 },
+    }))
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Queued native work",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* seed(chat.id, { finish: "stop" })
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "run parent tool" }],
+    })
+    yield* llm.push(
+      reply()
+        .tool("bash", {
+          command: "while [ ! -f release-subtask ]; do sleep 0.05; done",
+          description: "wait for queued native work",
+          workdir: dir,
+          timeout: 10_000,
+        })
+        .usage({ input: 95_000, output: 1 }),
+    )
+    yield* llm.text("compaction summary")
+    yield* llm.text("native child complete")
+    yield* llm.text("parent complete")
+    const run = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    yield* pollWithTimeout(
+      Effect.gen(function* () {
+        const messages = yield* sessions.messages({ sessionID: chat.id })
+        return messages.some((message) =>
+          message.parts.some((part) => part.type === "tool" && part.tool === "bash" && part.state.status === "running"),
+        )
+          ? true
+          : undefined
+      }),
+      "parent tool never started",
+    )
+    const queued = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      noReply: true,
+      parts: [{ type: "subtask", agent: "general", description: "queued native work", prompt: "finish native work" }],
+    })
+    yield* writeText(path.join(dir, "release-subtask"), "ready")
+    yield* Fiber.join(run)
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+    expect(messages.some((message) => message.info.id === queued.info.id)).toBe(true)
+    expect(messages.filter((message) => message.info.role === "assistant" && message.info.summary)).toHaveLength(1)
+    expect(messages.flatMap((message) => message.parts).filter((part) => part.type === "compaction")).toHaveLength(1)
+    const tasks = messages
+      .flatMap((message) => message.parts)
+      .filter((part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "task")
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0]?.state.status).toBe("completed")
+    expect(yield* sessions.children(chat.id)).toHaveLength(1)
+    expect(yield* llm.calls).toBe(4)
+    expect(yield* llm.pending).toBe(0)
+  }),
+)
+
 it.instance("loop continues when finish is unknown", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)
