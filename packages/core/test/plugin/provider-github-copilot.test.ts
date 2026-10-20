@@ -6,11 +6,11 @@ import { Location } from "@opencode/core/location"
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect } from "effect"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
-import { Npm } from "@opencode/util/npm"
-import { FSUtil } from "@opencode/util/fs-util"
-import { AppProcess } from "@opencode/util/process"
 import { HttpClient } from "effect/http"
-import { ProviderPlugins } from "@opencode/core/plugin/provider"
+import { OpenAIPlugin } from "@opencode/core/plugin/provider/openai"
+import { OpenRouterPlugin } from "@opencode/core/plugin/provider/openrouter"
+import { ChatGPTPlugin } from "@opencode/core/plugin/provider/chatgpt"
+import { OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
 import { Credential } from "@opencode/core/credential"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
@@ -114,10 +114,7 @@ describe("GithubCopilotPlugin", () => {
         ManagedPolicy.Service,
         HttpClient.HttpClient,
         Integration.Service,
-        Npm.Service,
-        FSUtil.Service,
         Config.Service,
-        AppProcess.Service,
       )(yield* Effect.context())
       const synced = yield* Deferred.make<void>()
       yield* plugins.activate([
@@ -134,7 +131,7 @@ describe("GithubCopilotPlugin", () => {
               )
               .pipe(Effect.asVoid),
         },
-        ...ProviderPlugins.map(
+        ...[GithubCopilotPlugin, OpenAIPlugin, OpenRouterPlugin, ChatGPTPlugin, OpencodePlugin].map(
           (plugin): Plugin.Generation => ({
             ...plugin,
             revision: "1",
