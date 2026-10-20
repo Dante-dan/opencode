@@ -4,7 +4,18 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/core/session"
 import { Location } from "@opencode/core/location"
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Context, Deferred, Effect } from "effect"
+import { ManagedPolicy } from "@opencode/core/managed-policy"
+import { Npm } from "@opencode/util/npm"
+import { FSUtil } from "@opencode/util/fs-util"
+import { AppProcess } from "@opencode/util/process"
+import { HttpClient } from "effect/http"
+import { ProviderPlugins } from "@opencode/core/plugin/provider"
+import { Credential } from "@opencode/core/credential"
+import { Bus } from "@opencode/core/bus"
+import { Config } from "@opencode/core/config"
+import { ConfigProviderPlugin } from "@opencode/core/config/plugin/provider"
+import { fromPromise } from "@opencode/plugin/promise/adapter"
 import { Model } from "@opencode/core/model"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { Plugin } from "@opencode/core/plugin"
@@ -58,6 +69,104 @@ const modelRequest = Effect.fn(function* (sessionID: Session.ID, kind: SessionRe
 })
 
 describe("GithubCopilotPlugin", () => {
+  it.effect("keeps discovered models enabled when another plugin holds activation", () =>
+    Effect.gen(function* () {
+      const server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          Response.json({
+            data: [
+              {
+                id: "gpt-4.1",
+                name: "GPT-4.1",
+                version: "gpt-4.1",
+                model_picker_enabled: true,
+                supported_endpoints: ["/chat/completions"],
+                capabilities: {
+                  family: "gpt",
+                  limits: { max_prompt_tokens: 100000, max_output_tokens: 8000 },
+                  supports: { tool_calls: true },
+                },
+              },
+            ],
+          }),
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => server.stop(true)))
+      const credentials = yield* Credential.Service
+      yield* credentials.create({
+        integrationID: Integration.ID.make("github-copilot"),
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID: Integration.MethodID.make("device"),
+          refresh: "test",
+          access: "",
+          expires: 0,
+          metadata: { apiEndpoint: server.url.origin },
+        }),
+      })
+      const plugins = yield* Plugin.Service
+      const models = yield* Model.Service
+      const config = yield* Config.Service
+      const context = Context.pick(
+        Provider.Service,
+        Bus.Service,
+        Credential.Service,
+        ManagedPolicy.Service,
+        HttpClient.HttpClient,
+        Integration.Service,
+        Npm.Service,
+        FSUtil.Service,
+        Config.Service,
+        AppProcess.Service,
+      )(yield* Effect.context())
+      const synced = yield* Deferred.make<void>()
+      yield* plugins.activate([
+        {
+          id: "catalog",
+          revision: "1",
+          effect: (ctx) =>
+            ctx.provider
+              .transform((editor) =>
+                editor.add({
+                  info: Provider.Info.empty(Provider.ID.githubCopilot),
+                  models: [Model.Info.default(Provider.ID.githubCopilot, Model.ID.make("gpt-4.1"))],
+                }),
+              )
+              .pipe(Effect.asVoid),
+        },
+        ...ProviderPlugins.map(
+          (plugin): Plugin.Generation => ({
+            ...plugin,
+            revision: "1",
+            effect: (ctx) =>
+              plugin
+                .effect(
+                  plugin.id === GithubCopilotPlugin.id
+                    ? {
+                        ...ctx,
+                        provider: {
+                          ...ctx.provider,
+                          reload: () =>
+                            ctx.provider.reload().pipe(Effect.tap(() => Deferred.succeed(synced, undefined))),
+                        },
+                      }
+                    : ctx,
+                )
+                .pipe(Effect.provide(context)),
+          }),
+        ),
+        { ...fromPromise({ id: "slow", setup: () => Effect.runPromise(Deferred.await(synced)) }), revision: "1" },
+        {
+          ...ConfigProviderPlugin.Plugin,
+          revision: "1",
+          effect: (ctx) => ConfigProviderPlugin.Plugin.effect(ctx).pipe(Effect.provideService(Config.Service, config)),
+        },
+      ])
+      expect((yield* plugins.list()).every((plugin) => plugin.state.status === "active")).toBe(true)
+      expect((yield* models.available()).map((model) => model.id)).toContain(Model.ID.make("gpt-4.1"))
+    }),
+  )
+
   test("prefers the account-specific Copilot API endpoint", () => {
     expect(
       copilotBaseURL({
