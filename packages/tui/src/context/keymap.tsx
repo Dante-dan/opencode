@@ -1,5 +1,5 @@
 import type { KeymapActive, KeymapCommand, KeymapLayer, KeymapPending } from "@opencode/plugin/tui/context"
-import { InputRenderable, TextareaRenderable, type KeyEvent, type Renderable } from "@opentui/core"
+import { CliRenderEvents, InputRenderable, TextareaRenderable, type KeyEvent, type Renderable } from "@opentui/core"
 import { stringifyKeyStroke, type Binding, type CommandContext } from "@opentui/keymap"
 import {
   registerBackspacePopsPendingSequence,
@@ -64,6 +64,10 @@ function Provider(props: ParentProps<{ config?: KeymapConfig }>) {
   const renderer = useRenderer()
   const config: KeymapConfig = props.config ?? useConfig().data
   const keymap = createDefaultOpenTuiKeymap(renderer)
+  // Terminal focus changes do not change the focused renderable observed by the keymap.
+  const clearPending = () => keymap.clearPendingSequence()
+  renderer.on(CliRenderEvents.BLUR, clearPending)
+  renderer.on(CliRenderEvents.FOCUS, clearPending)
   const mode = createMode(keymap)
   let invocation: { readonly id: string; readonly input?: string } | undefined
   const dispatch = (id: string, input?: string) => {
@@ -145,6 +149,8 @@ function Provider(props: ParentProps<{ config?: KeymapConfig }>) {
     )
   }
   onCleanup(() => {
+    renderer.off(CliRenderEvents.BLUR, clearPending)
+    renderer.off(CliRenderEvents.FOCUS, clearPending)
     dispose.reverse().forEach((item) => item())
     mode.dispose()
   })

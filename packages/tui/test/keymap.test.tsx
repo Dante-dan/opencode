@@ -1,9 +1,56 @@
 /** @jsxImportSource @opentui/solid */
 import { testRender } from "@opentui/solid"
+import { CliRenderEvents } from "@opentui/core"
 import { expect, test } from "bun:test"
 import { ConfigProvider } from "../src/config"
 import { Keymap } from "../src/context/keymap"
 import { createTuiResolvedConfig } from "./fixture/tui-runtime"
+
+test.each([CliRenderEvents.BLUR, CliRenderEvents.FOCUS])("terminal %s clears pending key sequences", async (event) => {
+  const calls: string[] = []
+  let pending = () => [] as readonly unknown[]
+
+  function Harness() {
+    pending = Keymap.usePendingSequence()
+    Keymap.createLayer(() => ({
+      commands: [
+        { id: "demo.sequence", bind: "gg", run: () => void calls.push("sequence") },
+        { id: "demo.leader", bind: "<leader>x", run: () => void calls.push("leader") },
+      ],
+    }))
+    return <box />
+  }
+
+  const app = await testRender(
+    () => (
+      <ConfigProvider config={createTuiResolvedConfig()}>
+        <Keymap.Provider>
+          <Harness />
+        </Keymap.Provider>
+      </ConfigProvider>
+    ),
+    { width: 80, height: 24, kittyKeyboard: true },
+  )
+  try {
+    app.mockInput.pressKey("g")
+    expect(pending()).toHaveLength(1)
+    app.renderer.emit(event)
+    expect(pending()).toHaveLength(0)
+    app.mockInput.pressKey("x", { ctrl: true })
+    app.mockInput.pressKey("x")
+    expect(calls).toEqual(["leader"])
+
+    app.mockInput.pressKey("x", { ctrl: true })
+    expect(pending()).toHaveLength(1)
+    app.renderer.emit(event)
+    expect(pending()).toHaveLength(0)
+    app.mockInput.pressKey("g")
+    app.mockInput.pressKey("g")
+    expect(calls).toEqual(["leader", "sequence"])
+  } finally {
+    app.renderer.destroy()
+  }
+})
 
 test("legacy page key aliases compile as page keys", async () => {
   let read = () => ({ up: "", down: "" })
