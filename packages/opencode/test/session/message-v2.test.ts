@@ -1888,6 +1888,53 @@ describe("session.message-v2.latest", () => {
     expect(state.tasks[0]).toMatchObject({ type: "compaction", auto: true })
   })
 
+  test("compaction preserves queued subtasks without replaying consumed work", () => {
+    const queued: SessionV1.WithParts = {
+      info: { ...userInfo("msg_queued"), time: { created: 250 } },
+      parts: [{
+        ...basePart("msg_queued", "queued"),
+        type: "subtask",
+        prompt: "inspect",
+        description: "queued during parent tool call",
+        agent: "general",
+      }] as SessionV1.Part[],
+    }
+    const parent: SessionV1.WithParts = {
+      info: { ...overflowAssistant.info, time: { created: 200 } },
+      parts: [],
+    }
+    const compaction: SessionV1.WithParts = {
+      ...compactionUser,
+      info: { ...compactionUser.info, time: { created: 300 } },
+    }
+    const summary: SessionV1.WithParts = {
+      ...summaryAssistant,
+      info: { ...summaryAssistant.info, time: { created: 400 } },
+    }
+    const continuation: SessionV1.WithParts = {
+      ...continueUser,
+      info: { ...continueUser.info, time: { created: 500 } },
+    }
+    const pending = MessageV2.latest([parent, queued, compaction])
+    expect(pending.tasks.pop()?.type).toBe("compaction")
+    const filtered = MessageV2.filterCompacted([continuation, summary, compaction, queued, parent, tailUser])
+    const state = MessageV2.latest(filtered)
+    expect(state.finished?.id).toBe(SUMMARY_ASSISTANT)
+    expect(state.finished?.summary).toBe(true)
+    expect(state.tasks.map((part) => part.id)).toEqual([queued.parts[0].id])
+
+    const consumed: SessionV1.WithParts = {
+      info: {
+        ...assistantInfo("msg_consumed", continuation.info.id),
+        time: { created: 600 },
+        finish: "tool-calls",
+      } as SessionV1.Assistant,
+      parts: [],
+    }
+    expect(MessageV2.latest([...filtered, consumed]).tasks).toEqual([])
+    expect(MessageV2.latest([queued, consumed, summary]).tasks).toEqual([])
+  })
+
   test("selects compaction and subtask work after the finished boundary by creation time", () => {
     const finished = {
       ...assistantInfo("msg_z_finished", "msg_parent"),

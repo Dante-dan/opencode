@@ -596,16 +596,22 @@ export function latest(msgs: WithParts[]) {
   let user: User | undefined
   let assistant: Assistant | undefined
   let finished: Assistant | undefined
+  let taskFinished: Assistant | undefined
   for (const msg of msgs) {
     const info = msg.info
     if (info.role === "user" && isAfter(info, user)) user = info
     if (info.role === "assistant" && isAfter(info, assistant)) assistant = info
     if (info.role === "assistant" && info.finish && isAfter(info, finished)) finished = info
+    if (info.role === "assistant" && info.finish && !info.summary && isAfter(info, taskFinished)) taskFinished = info
   }
+  // A compaction summary consumes compaction work, not pending native subtasks.
+  // Keep `finished` unchanged for the run loop's repeated-overflow guard.
   const tasks = msgs.flatMap((m) =>
-    finished && !isAfter(m.info, finished)
-      ? []
-      : m.parts.filter((p): p is CompactionPart | SubtaskPart => p.type === "compaction" || p.type === "subtask"),
+    m.parts.filter((p): p is CompactionPart | SubtaskPart => {
+      if (p.type === "compaction") return !finished || isAfter(m.info, finished)
+      if (p.type === "subtask") return !taskFinished || isAfter(m.info, taskFinished)
+      return false
+    }),
   )
   return { user, assistant, finished, tasks }
 }
