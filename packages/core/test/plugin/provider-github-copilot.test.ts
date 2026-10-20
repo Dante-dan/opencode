@@ -115,7 +115,17 @@ describe("GithubCopilotPlugin", () => {
         HttpClient.HttpClient,
         Integration.Service,
         Config.Service,
-      )(yield* Effect.context())
+      )(
+        yield* Effect.context<
+          | Provider.Service
+          | Bus.Service
+          | Credential.Service
+          | ManagedPolicy.Service
+          | HttpClient.HttpClient
+          | Integration.Service
+          | Config.Service
+        >(),
+      )
       const synced = yield* Deferred.make<void>()
       yield* plugins.activate([
         {
@@ -136,8 +146,8 @@ describe("GithubCopilotPlugin", () => {
             ...plugin,
             revision: "1",
             effect: (ctx) =>
-              plugin
-                .effect(
+              Effect.gen(function* () {
+                yield* plugin.effect(
                   plugin.id === GithubCopilotPlugin.id
                     ? {
                         ...ctx,
@@ -149,7 +159,7 @@ describe("GithubCopilotPlugin", () => {
                       }
                     : ctx,
                 )
-                .pipe(Effect.provide(context)),
+              }).pipe(Effect.provide(context)),
           }),
         ),
         { ...fromPromise({ id: "slow", setup: () => Effect.runPromise(Deferred.await(synced)) }), revision: "1" },
@@ -160,6 +170,7 @@ describe("GithubCopilotPlugin", () => {
         },
       ])
       expect((yield* plugins.list()).every((plugin) => plugin.state.status === "active")).toBe(true)
+      expect((yield* models.get(Provider.ID.githubCopilot, Model.ID.make("gpt-4.1")))?.limit.context).toBe(100000)
       expect((yield* models.available()).map((model) => model.id)).toContain(Model.ID.make("gpt-4.1"))
     }),
   )
