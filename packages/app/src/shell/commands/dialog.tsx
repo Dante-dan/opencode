@@ -157,7 +157,7 @@ export function CommandPaletteView(props: {
           />
         </div>
         <ScrollView class="command-palette-scroll" viewportRef={(el) => (resultsRef = el)}>
-          <div class="command-palette-results" role="listbox">
+          <div class="command-palette-results" role="listbox" aria-label={props.placeholder}>
             <Show
               when={visibleEntries().length > 0}
               fallback={

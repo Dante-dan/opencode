@@ -339,6 +339,7 @@ export const dict = {
 
   "dialog.directory.action.selectFile": "Select file",
   "dialog.directory.action.selectFolder": "Select folder",
+  "dialog.directory.suggestions": "Path suggestions",
   "dialog.directory.root": "Root",
   "dialog.directory.parent": "Parent",
   "dialog.directory.readError": "Unable to read this folder",

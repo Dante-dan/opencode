@@ -1,4 +1,4 @@
-import { type ComponentProps, splitProps, Show } from "solid-js"
+import { type ComponentProps, type JSX, createMemo, splitProps, Show } from "solid-js"
 import "./avatar.css"
 
 const segmenter =
@@ -38,6 +38,19 @@ export function Avatar(props: AvatarProps) {
 
   const src = split.src // did this so i can zero it out to test fallback
 
+  const style = createMemo(() => {
+    const value: JSX.CSSProperties = {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- SAFETY: Solid ComponentProps types style as a CSS object or string; only object styles can be merged with avatar colors.
+      ...(typeof split.style === "object" ? split.style : undefined),
+    }
+
+    if (!src && split.background) value["--avatar-bg"] = split.background
+
+    if (!src && split.foreground) value["--avatar-fg"] = split.foreground
+
+    return value
+  })
+
   return (
     <div
       {...rest}
@@ -49,14 +62,10 @@ export function Avatar(props: AvatarProps) {
         ...split.classList,
         [split.class ?? ""]: !!split.class,
       }}
-      style={{
-        ...(typeof split.style === "object" ? split.style : {}),
-        ...(!src && split.background ? { "--avatar-bg": split.background } : {}),
-        ...(!src && split.foreground ? { "--avatar-fg": split.foreground } : {}),
-      }}
+      style={style()}
     >
       <Show when={src} fallback={first(split.fallback)}>
-        {(src) => <img src={src()} draggable={false} data-slot="avatar-image" />}
+        {(src) => <img src={src()} alt="" draggable={false} data-slot="avatar-image" />}
       </Show>
     </div>
   )

@@ -38,7 +38,7 @@ const HOME_SESSION_LONG_PRESS_MS = 500
 function isBackgroundOpen(event: MouseEvent) {
   return shouldOpenSessionInBackground({
     button: event.button,
-    mac: typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(navigator.platform),
+    mac: /(Mac|iPod|iPhone|iPad)/.test(navigator.platform),
     meta: event.metaKey,
     ctrl: event.ctrlKey,
     shift: event.shiftKey,
@@ -270,7 +270,12 @@ function HomeSessionSearch(
             }}
           >
             <div class="flex flex-col pt-9">
-              <div id={HOME_SESSION_SEARCH_RESULTS_ID} role="listbox" class="flex flex-col gap-4 pt-4">
+              <div
+                id={HOME_SESSION_SEARCH_RESULTS_ID}
+                role="listbox"
+                aria-label={props.searchPlaceholder}
+                class="flex flex-col gap-4 pt-4"
+              >
                 <Show
                   when={!props.searchLoading}
                   fallback={

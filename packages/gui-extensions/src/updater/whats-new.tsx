@@ -275,7 +275,7 @@ function DialogReleaseNotes(props: { highlights: Highlight[]; dialog: DialogHand
             <Show when={paged()}>
               <div class="flex items-center gap-1.5 -my-2.5">
                 <Index each={props.highlights}>
-                  {(_, i) => (
+                  {(highlight, i) => (
                     <button
                       type="button"
                       class="h-6 flex items-center cursor-pointer bg-transparent border-none p-0 transition-all duration-200"
@@ -283,6 +283,8 @@ function DialogReleaseNotes(props: { highlights: Highlight[]; dialog: DialogHand
                         "w-8": i === index(),
                         "w-3": i !== index(),
                       }}
+                      aria-label={ctx.t("releaseNotes.page", { page: i + 1, title: highlight().title })}
+                      aria-current={i === index() ? "page" : undefined}
                       onClick={() => setIndex(i)}
                     >
                       <div

@@ -28,5 +28,6 @@ export default {
   "releaseNotes.action.getStarted": "Get started",
   "releaseNotes.action.next": "Next",
   "releaseNotes.action.hideFuture": "Don't show these in the future",
+  "releaseNotes.page": "Page {{page}}: {{title}}",
   "releaseNotes.media.alt": "Release preview",
 }

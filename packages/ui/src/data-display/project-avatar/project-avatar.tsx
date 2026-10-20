@@ -81,6 +81,9 @@ export interface ProjectAvatarProps extends ComponentProps<"div"> {
 export function ProjectAvatar(props: ProjectAvatarProps) {
   const [split, rest] = splitProps(props, ["fallback", "src", "variant", "unread", "class", "classList", "style"])
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- SAFETY: Solid ComponentProps types style as a CSS object or string; this component forwards only the object form.
+  const style = () => (typeof split.style === "object" ? split.style : undefined)
+
   return (
     <div
       {...rest}
@@ -90,7 +93,7 @@ export function ProjectAvatar(props: ProjectAvatarProps) {
         ...split.classList,
         [split.class ?? ""]: !!split.class,
       }}
-      style={typeof split.style === "object" ? split.style : undefined}
+      style={style()}
     >
       <div
         data-slot="project-avatar-surface"
@@ -98,7 +101,7 @@ export function ProjectAvatar(props: ProjectAvatarProps) {
         data-has-image={split.src ? "" : undefined}
       >
         <Show when={split.src} fallback={first(split.fallback)}>
-          {(value) => <img src={value()} draggable={false} data-slot="project-avatar-image" />}
+          {(value) => <img src={value()} alt="" draggable={false} data-slot="project-avatar-image" />}
         </Show>
       </div>
       <Show when={split.unread}>
