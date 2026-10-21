@@ -175,6 +175,9 @@ export const GithubCopilotPlugin = define({
         ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
         : undefined
       if (credential?.type !== "oauth") {
+        yield* Effect.logDebug("skipping GitHub Copilot model sync", {
+          reason: connection ? "non-OAuth credential" : "no connection",
+        })
         loaded.baseURL = undefined
         loaded.token = undefined
         loaded.models = undefined
@@ -184,6 +187,7 @@ export const GithubCopilotPlugin = define({
 
       const url = copilotBaseURL(credential.metadata) ?? baseURL()
       const provider = yield* providers.get(Provider.ID.githubCopilot)
+      yield* Effect.logDebug("syncing GitHub Copilot models")
       const remote = yield* Effect.tryPromise({
         try: () =>
           CopilotModels.load(url, {
@@ -201,12 +205,19 @@ export const GithubCopilotPlugin = define({
       if (
         IntegrationConnection.key(connection) !==
         IntegrationConnection.key(yield* ctx.integration.connection.active("github-copilot"))
-      )
+      ) {
+        yield* Effect.logDebug("discarding GitHub Copilot model sync", { reason: "connection changed" })
         return
+      }
       loaded.baseURL = url
       loaded.token = credential.refresh
       loaded.models = remote
       loaded.connection = connection
+      if (remote)
+        yield* Effect.logDebug("synced GitHub Copilot models", {
+          models: remote.size,
+          pickerEnabled: Array.from(remote.values()).filter((model) => model.model_picker_enabled).length,
+        })
     })
 
     yield* ctx.integration.transform((editor) => {
