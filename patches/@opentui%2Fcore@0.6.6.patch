@@ -1,0 +1,22 @@
+--- a/index.bun.js
++++ b/index.bun.js
+@@ -12620,7 +12620,7 @@
+           }
+           this.destroyUnusedDefaultRenderable(custom.renderable);
+         }
+-        this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token);
++        this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token, forceTableRefresh);
+         existing.renderable.marginBottom = 0;
+         if (existing.marginTop !== block.marginTop) {
+           this.applyMargins(existing.renderable, block.marginTop, 0);
+--- a/index.node.js
++++ b/index.node.js
+@@ -12619,7 +12619,7 @@
+           }
+           this.destroyUnusedDefaultRenderable(custom.renderable);
+         }
+-        this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token);
++        this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token, forceTableRefresh);
+         existing.renderable.marginBottom = 0;
+         if (existing.marginTop !== block.marginTop) {
+           this.applyMargins(existing.renderable, block.marginTop, 0);
