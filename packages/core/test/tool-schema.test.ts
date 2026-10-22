@@ -415,7 +415,7 @@ test("raw JSON schemas validate and decode tool input", async () => {
   const input = {
     type: "object",
     properties: {
-      value: { type: "string" },
+      value: { type: "string", pattern: "^ok$" },
       nested: {
         type: "object",
         properties: { count: { type: "integer", minimum: 1 } },
@@ -477,7 +477,7 @@ test("raw JSON schemas resolve draft-07 definitions", async () => {
       type: "object",
       properties: { value: { $ref: "#/definitions/value" } },
       required: ["value"],
-      definitions: { value: { type: "string" } },
+      definitions: { value: { type: "string", pattern: "^ok$" } },
     },
     execute: (input) => Effect.succeed({ content: JSON.stringify(input) }),
   }

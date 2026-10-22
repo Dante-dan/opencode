@@ -105,7 +105,10 @@ const jsonSchema = (schema: JsonSchema.JsonSchema) => {
     (typeof schema.$schema === "string" && schema.$schema.includes("draft-07")) || "definitions" in schema
       ? JsonSchema.fromSchemaDraft07(schema)
       : JsonSchema.fromSchemaDraft2020_12(schema)
-  return Schema.make<Schema.Codec<unknown>>(SchemaRepresentation.fromJsonSchemaDocument(draft).ast)
+  // External schemas may contain untrusted patterns. Skip regex evaluation without discarding structural validation.
+  return Schema.make<Schema.Codec<unknown>>(
+    SchemaRepresentation.fromJsonSchemaDocument(draft, { patterns: "ignore" }).ast,
+  )
 }
 
 const encodeOutput = (schema: Tool.ValueSchema<any>, value: unknown) => {
