@@ -342,3 +342,16 @@ test("the project menu path arrow has a glyph when the page has an older icon sp
     .toBeGreaterThan(0)
   await expect(page.locator("#opencode-v2-icon-sprite")).toHaveCount(1)
 })
+
+// Home and draft routes do not mount the session command owner.
+test("New Session stays available on Home and the new-session page", async ({ page }) => {
+  await openHome(page)
+  await expect(row(page, fixture.expected.targetTitle)).toBeVisible()
+  const modifier = await page.evaluate(() => (/Mac/.test(navigator.platform) ? "Meta" : "Control"))
+  await page.keyboard.press(`${modifier}+Shift+s`)
+  await expect(page.locator('[data-component="new-session"]')).toBeVisible()
+  const first = page.url()
+  await page.keyboard.press(`${modifier}+Shift+s`)
+  await expect(page).not.toHaveURL(first)
+  await expect(page.locator('[data-component="new-session"]')).toBeVisible()
+})

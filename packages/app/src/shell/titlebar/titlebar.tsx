@@ -464,6 +464,14 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
               return [
                 {
+                  id: "session.new",
+                  category: language.t("command.category.session"),
+                  title: language.t("command.session.new"),
+                  keybind: "mod+shift+s",
+                  slash: "new",
+                  onSelect: openNewTab,
+                },
+                {
                   id: "tab.new",
                   category: "tab",
                   title: language.t("command.session.new"),
