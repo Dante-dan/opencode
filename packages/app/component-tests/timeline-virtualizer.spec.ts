@@ -106,3 +106,25 @@ for (const input of [
     }
   })
 }
+
+for (const input of [
+  { name: "many rows", count: 100_000, rowHeight: 60, immediate: true },
+  { name: "large tail", count: 10_000, rowHeight: 120_000 },
+  { name: "fractional row", count: 100, rowHeight: 60.5, immediate: true },
+]) {
+  story(`diagnostic: cold restore remains responsive with ${input.name}`, async ({ page }) => {
+    await page.evaluate(
+      async ({ fixture, input }) => {
+        const { mountTimelineVirtualizer } = await import(fixture)
+        mountTimelineVirtualizer(input)
+      },
+      { fixture, input },
+    )
+    const root = page.getByTestId("timeline-virtualizer-fixture")
+    await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+    await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+    await expect(root.locator(`[data-timeline-key="user-message:message-${input.count - 1}"]`)).toBeVisible()
+    await root.locator("[data-scrollable]").dispatchEvent("wheel", { deltaY: -1 })
+    await expect(root.getByTestId("timeline-controls")).toHaveAttribute("data-pinned", "false")
+  })
+}
