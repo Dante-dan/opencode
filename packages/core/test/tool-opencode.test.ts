@@ -16,6 +16,7 @@ import { WorktreeTable } from "@opencode/core/worktree/sql"
 import { WorktreeStrategies } from "@opencode/core/worktree/strategies"
 import { Model } from "@opencode/schema/model"
 import { Effect } from "effect"
+import { eq } from "drizzle-orm"
 import { initRepo } from "./fixture/git"
 import { tmpdirScoped } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
@@ -162,7 +163,7 @@ const worktreeIt = testEffect(
   ),
 )
 
-worktreeIt.live("creates, lists, and removes worktrees for the plugin's project", () =>
+worktreeIt.live("creates, lists, and removes worktrees from the current repository despite another canonical directory", () =>
   Effect.gen(function* () {
     const plugins = yield* Plugin.Service
     const sessions = yield* Session.Service
@@ -170,17 +171,18 @@ worktreeIt.live("creates, lists, and removes worktrees for the plugin's project"
     const strategies = yield* WorktreeStrategies.Service
     const database = yield* Database.Service
     const parent = yield* tmpdirScoped()
+    const canonical = yield* tmpdirScoped()
     yield* Effect.promise(() => initRepo(location.directory))
     yield* database.db
       .insert(ProjectTable)
       .values({
         id: location.project.id,
-        worktree: location.directory,
+        worktree: AbsolutePath.make(canonical.path),
         sandboxes: [],
         time_created: 1,
         time_updated: 1,
       })
-      .onConflictDoUpdate({ target: ProjectTable.id, set: { worktree: location.directory } })
+      .onConflictDoUpdate({ target: ProjectTable.id, set: { worktree: AbsolutePath.make(canonical.path) } })
       .run()
       .pipe(Effect.orDie)
     yield* database.db
@@ -212,6 +214,12 @@ worktreeIt.live("creates, lists, and removes worktrees for the plugin's project"
 
     expect(yield* run("worktree_create", { name: " task " })).toEqual({ directory })
     expect(yield* Effect.promise(() => fs.stat(directory).then((stat) => stat.isDirectory()))).toBe(true)
+    yield* database.db
+      .update(ProjectTable)
+      .set({ worktree: location.directory })
+      .where(eq(ProjectTable.id, location.project.id))
+      .run()
+      .pipe(Effect.orDie)
     expect((yield* run("worktree_list", {})).worktrees).toContainEqual({ directory, strategy: "git" })
 
     // The project checkout is not a removable worktree.

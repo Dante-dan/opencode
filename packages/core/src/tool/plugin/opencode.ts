@@ -159,7 +159,11 @@ export const Plugin = {
           output: Worktree.Info,
           options: { namespace: "opencode", codemode: true, pinned: true },
           execute: (input) =>
-            ctx.worktree.create({ projectID: ctx.location.project.id, name: input.name }).pipe(
+            ctx.worktree.create({
+              projectID: ctx.location.project.id,
+              from: ctx.location.project.directory,
+              name: input.name,
+            }).pipe(
               Effect.map((output) => ({ output, content: `Created worktree in ${output.directory}.` })),
               Effect.mapError(
                 (error) => new ToolFailure({ message: `Unable to create worktree ${input.name}`, error }),

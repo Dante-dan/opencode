@@ -203,10 +203,14 @@ const layer = Layer.effect(
 
     const create = Effect.fn("Worktree.create")(function* (input: CreateInput, current?: WorktreeStrategies.Interface) {
       const row = yield* project(input.projectID)
-      const settings = yield* load(row.worktree, current)
+      const sourceDirectory = yield* source(input.projectID, input.from ?? row.worktree)
+      // Use the calling location's configuration when it selects its own repository.
+      const settings =
+        input.from && current && FSUtil.contains(sourceDirectory, current.directory)
+          ? current.get()
+          : yield* load(row.worktree, current)
       const selected = yield* getStrategy(settings.selected, settings.strategies)
       const directory = input.directory ?? settings.directory
-      const sourceDirectory = yield* source(input.projectID, input.from ?? row.worktree)
       yield* fs.makeDirectory(directory, { recursive: true }).pipe(Effect.orDie)
       const name = input.name ?? Slug.create()
       let suffix = 1

@@ -305,7 +305,7 @@ describe("Worktree", () => {
     }),
   )
 
-  projectIt.live("uses canonical configuration with an explicit source clone", () =>
+  projectIt.live("uses the source clone configuration when the project has another canonical directory", () =>
     Effect.gen(function* () {
       const root = yield* Effect.acquireRelease(
         Effect.promise(() => tmpdir()),
@@ -328,7 +328,7 @@ describe("Worktree", () => {
       const selected = yield* projects.resolve(clone)
       const database = yield* Database.Service
       const bus = yield* Bus.Service
-      const context = yield* Layer.build(worktreeLayer(main, selected.id, database, bus, root.path))
+      const context = yield* Layer.build(worktreeLayer(clone, selected.id, database, bus, root.path))
       const worktrees = Context.get(context, Worktree.Service)
       const config = yield* Config.Test
       yield* config.setEntries([
@@ -357,7 +357,7 @@ describe("Worktree", () => {
       )
 
       expect(selected.id).toBe(initial.id)
-      expect(created.directory).toBe(abs(path.join(main, ".lane/trees/selected-clone")))
+      expect(created.directory).toBe(abs(path.join(clone, ".lane/trees/selected-clone")))
       expect((yield* projects.list()).find((project) => project.id === initial.id)?.canonical).toBe(main)
       expect(yield* Effect.promise(() => $`git rev-parse HEAD`.cwd(created.directory).text())).toBe(
         yield* Effect.promise(() => $`git rev-parse HEAD`.cwd(clone).text()),
