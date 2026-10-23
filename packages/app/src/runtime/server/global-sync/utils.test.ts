@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentListOutput, ModelListOutput, Project, ProviderListOutput } from "@opencode/client/promise"
+import { hasCustomAgent } from "@/providers/models/agent"
 import { directoryKey, normalizeAgentList, normalizeProjectInfo, normalizeProviderList } from "./utils"
 
 describe("normalizeAgentList", () => {
@@ -7,6 +8,7 @@ describe("normalizeAgentList", () => {
     const result = normalizeAgentList([
       {
         id: "build",
+        native: true,
         name: "Build",
         mode: "primary",
         hidden: false,
@@ -21,6 +23,7 @@ describe("normalizeAgentList", () => {
     expect(result).toEqual([
       {
         name: "build",
+        native: true,
         description: undefined,
         mode: "primary",
         hidden: false,
@@ -35,6 +38,23 @@ describe("normalizeAgentList", () => {
         steps: undefined,
       },
     ])
+  })
+
+  test("preserves custom-agent detection for current and legacy agent lists", () => {
+    const agent = {
+      id: "reviewer",
+      name: "Reviewer",
+      mode: "primary",
+      hidden: false,
+      request: { settings: {}, headers: {}, body: {} },
+      permissions: [],
+    }
+    for (const native of [true, false, undefined]) {
+      const result = normalizeAgentList([{ ...agent, native }] as AgentListOutput["data"])
+      expect(result[0].native).toBe(native)
+      expect(hasCustomAgent(result)).toBe(native === false)
+      expect(hasCustomAgent(normalizeAgentList(result))).toBe(native === false)
+    }
   })
 })
 

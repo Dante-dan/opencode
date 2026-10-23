@@ -231,6 +231,7 @@ permissions:
 
       const build = yield* agents.get(Agent.defaultID)
       if (!build) throw new Error("expected configured build agent")
+      expect(build.native).toBe(true)
       const opencodeData = path.join(global.home, ".local", "share", "opencode", "*")
       const mcpAuth = path.join(global.home, ".local", "share", "opencode", "mcp-auth.json")
       expect(build.permissions).toEqual([
@@ -501,6 +502,7 @@ Use native v2 fields.`,
           expect(yield* agents.get(Agent.ID.make("team/helper"))).toMatchObject({ system: "Help the team." })
           expect(yield* agents.get(Agent.ID.make("native"))).toMatchObject({
             system: "Use native v2 fields.",
+            native: false,
             request: { headers: { "x-agent": "native" }, body: { effort: "high" } },
             permissions: [...defaultPermissions, { action: "edit", resource: "*", effect: "deny" }],
           })

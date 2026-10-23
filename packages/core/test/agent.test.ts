@@ -144,6 +144,7 @@ describe("Agent", () => {
       yield* agent.transform((editor) => editor.update(id, () => {}))
       const info = yield* agent.get(id)
       expect(info?.mode).toBe("primary")
+      expect(info?.native).toBe(false)
       expect(info?.permissions.slice(0, Agent.Info.default(id).permissions.length)).toEqual(
         Agent.Info.default(id).permissions,
       )
@@ -185,6 +186,7 @@ describe("Agent", () => {
         "summary",
         "title",
       ])
+      expect(agents.every((item) => item.native === true)).toBe(true)
       expect((yield* agent.get(Agent.defaultID))?.system).toBeUndefined()
       const permissions = (yield* agent.get(Agent.defaultID))?.permissions ?? []
       const compaction = yield* agent.get(Agent.ID.make("compaction"))

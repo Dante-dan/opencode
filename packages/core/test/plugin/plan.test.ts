@@ -249,6 +249,7 @@ describe("plan plugin mutations", () => {
   it.effect("allows edits only inside the Plan directory", () =>
     Effect.gen(function* () {
       const { planAgent } = yield* run()
+      expect(planAgent).toMatchObject({ native: true })
       expect(Permission.evaluate("edit", path.join(planDirectory, "work.md"), planAgent.permissions).effect).toBe(
         "allow",
       )

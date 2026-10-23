@@ -54,6 +54,7 @@ export const Plugin = define({
   effect: Effect.fn(function* (ctx) {
     yield* ctx.agent.transform((editor) => {
       editor.update(Agent.defaultID, (item) => {
+        item.native = true
         item.name = Agent.Name.make("Build")
         item.description = "The default agent. Executes tools based on configured permissions."
         item.mode = "primary"
@@ -61,6 +62,7 @@ export const Plugin = define({
       })
 
       editor.update(Agent.ID.make("general"), (item) => {
+        item.native = true
         item.name = Agent.Name.make("General")
         item.description =
           "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."
@@ -72,6 +74,7 @@ export const Plugin = define({
       })
 
       editor.update(Agent.ID.make("explore"), (item) => {
+        item.native = true
         item.name = Agent.Name.make("Explore")
         item.description =
           'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.'
@@ -94,12 +97,14 @@ export const Plugin = define({
       })
 
       editor.update(Agent.ID.make("compaction"), (item) => {
+        item.native = true
         item.name = Agent.Name.make("Compaction")
         item.mode = "primary"
         item.hidden = true
       })
 
       editor.update(Agent.ID.make("title"), (item) => {
+        item.native = true
         item.name = Agent.Name.make("Title")
         item.mode = "primary"
         item.hidden = true
@@ -108,6 +113,7 @@ export const Plugin = define({
       })
 
       editor.update(Agent.ID.make("summary"), (item) => {
+        item.native = true
         item.name = Agent.Name.make("Summary")
         item.mode = "primary"
         item.hidden = true

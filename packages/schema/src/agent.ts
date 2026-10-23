@@ -29,6 +29,7 @@ export const Info = Schema.Struct({
   description: Schema.String.pipe(optional),
   mode: Schema.Literals(["subagent", "primary", "all"]),
   hidden: Schema.Boolean,
+  native: Schema.Boolean.pipe(optional),
   color: Color.pipe(optional),
   steps: PositiveInt.pipe(optional),
   permissions: Permission.Ruleset,
@@ -43,6 +44,7 @@ export const Info = Schema.Struct({
           request: { settings: {}, headers: {}, body: {} },
           mode: "primary",
           hidden: false,
+          native: false,
           permissions: [
             { action: "*", resource: "*", effect: "allow" },
             { action: "read", resource: "*.env", effect: "ask" },
