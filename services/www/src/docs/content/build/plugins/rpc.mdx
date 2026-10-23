@@ -163,6 +163,14 @@ One plugin can register more than one RPC. Disposing the registration removes it
 
 Once the RPC is registered, it can be called over HTTP or from another plugin.
 
+RPC registrations are scoped to the location where the server plugin runs.
+Pass that location when calling from an external client or TUI plugin, as shown
+below.
+
+Without an explicit location, HTTP requests use the server process's working
+directory, which can differ from the project directory when using the background
+service. A call to a location without the registration returns `rpc.unavailable`.
+
 ### HTTP
 
 Create an OpenCode client, then use `client.rpc` to create a subclient for the
@@ -177,8 +185,25 @@ const client = OpenCode.make({
 })
 
 const acme = client.rpc(Acme)
-const result = await acme.search({ query: "hello" })
+const result = await acme.search(
+  { query: "hello" },
+  { location: { directory: "/absolute/path/to/project" } },
+)
 ```
+
+For raw HTTP requests, pass the project directory and wrap the method argument
+in `input`:
+
+```sh
+curl -X POST 'http://localhost:4096/api/rpc/acme/search' \
+  -H 'Content-Type: application/json' \
+  -H 'x-opencode-directory: /absolute/path/to/project' \
+  -d '{"input":{"query":"hello"}}'
+```
+
+The `location[directory]` query parameter also selects the project directory.
+The HTTP response wraps the result as `{"output":{"text":"..."}}`;
+`client.rpc` unwraps `output` for you.
 
 ### Plugin
 
@@ -192,8 +217,10 @@ import { Acme } from "opencode-acme-plugin/rpc"
 export default Plugin.define({
   id: "acme-tui",
   async setup(context) {
+    const location = context.location
+    if (!location) return
     const acme = context.client.rpc(Acme)
-    const result = await acme.search({ query: "hello" })
+    const result = await acme.search({ query: "hello" }, { location })
     console.log(result)
   },
 })
