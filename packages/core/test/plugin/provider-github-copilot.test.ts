@@ -1,4 +1,5 @@
 import { AISDK } from "@opencode/core/aisdk"
+import { Credential } from "@opencode/core/credential"
 import { App } from "@opencode/core/app"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/core/session"
@@ -58,6 +59,61 @@ const modelRequest = Effect.fn(function* (sessionID: Session.ID, kind: SessionRe
 })
 
 describe("GithubCopilotPlugin", () => {
+  for (const picker of [false, true]) {
+    it.effect(`waits for initial discovery before publishing picker=${picker} models`, () =>
+      Effect.gen(function* () {
+        const server = Bun.serve({
+          port: 0,
+          fetch: () =>
+            Response.json({
+              data: [
+                {
+                  id: "gpt-4.1",
+                  name: "GPT-4.1",
+                  version: "gpt-4.1",
+                  model_picker_enabled: picker,
+                  supported_endpoints: ["/chat/completions"],
+                  capabilities: {
+                    family: "gpt",
+                    limits: { max_prompt_tokens: 100000, max_output_tokens: 8000 },
+                    supports: { tool_calls: true },
+                  },
+                },
+              ],
+            }),
+        })
+        yield* Effect.addFinalizer(() => Effect.sync(() => server.stop(true)))
+        const providers = yield* Provider.Service
+        yield* providers.transform((editor) => {
+          editor.add({
+            info: Provider.Info.empty(Provider.ID.githubCopilot),
+            models: [Model.Info.default(Provider.ID.githubCopilot, Model.ID.make("gpt-4.1"))],
+          })
+        })
+        const credentials = yield* Credential.Service
+        yield* credentials.create({
+          integrationID: Integration.ID.make("github-copilot"),
+          value: Credential.OAuth.make({
+            type: "oauth",
+            methodID: Integration.MethodID.make("device"),
+            refresh: "test",
+            access: "",
+            expires: 0,
+            metadata: { apiEndpoint: server.url.origin },
+          }),
+        })
+        const models = yield* Model.Service
+        // Materialize the static catalog first, as a fast startup does.
+        expect((yield* models.get(Provider.ID.githubCopilot, Model.ID.make("gpt-4.1")))?.enabled).toBe(true)
+        yield* addPlugin()
+        const model = yield* models.get(Provider.ID.githubCopilot, Model.ID.make("gpt-4.1"))
+        expect(model?.limit.context).toBe(100000)
+        expect(model?.enabled).toBe(picker)
+        expect((yield* models.available()).some((item) => item.providerID === Provider.ID.githubCopilot)).toBe(picker)
+      }),
+    )
+  }
+
   test("prefers the account-specific Copilot API endpoint", () => {
     expect(
       copilotBaseURL({

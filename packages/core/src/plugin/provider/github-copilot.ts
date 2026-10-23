@@ -261,7 +261,8 @@ export const GithubCopilotPlugin = define({
       Stream.runForEach(refresh),
       Effect.forkScoped({ startImmediately: true }),
     )
-    yield* refresh().pipe(Effect.forkScoped)
+    // The first catalog must use the account response, regardless of later plugins' setup time.
+    yield* refresh()
     yield* ctx.aisdk.hook(
       "sdk",
       Effect.fn(function* (evt) {
