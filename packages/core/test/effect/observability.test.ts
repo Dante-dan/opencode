@@ -6,6 +6,7 @@ import os from "os"
 import path from "path"
 import { fileLogger } from "@opencode/util/observability/logging"
 import { resource } from "@opencode/util/observability/otlp"
+import { tmpdir } from "../fixture/tmpdir"
 
 const otelResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES
 
@@ -139,3 +140,28 @@ test("file logger flattens nested objects", async () => {
   expect(line).toContain("session.id=session-1")
   expect(line).not.toContain("request={")
 })
+
+// Creating directory symlinks requires privileges that Windows CI does not provide.
+test.skipIf(process.platform === "win32").each(["absolute", "relative"])(
+  "file logger reports a dangling %s data symlink without changing it",
+  async (kind) => {
+    await using dir = await tmpdir("opencode-log-symlink-")
+    const symlink = path.join(dir.path, "data")
+    const target = path.join(dir.path, "missing", "data")
+    const link = kind === "absolute" ? target : path.relative(dir.path, target)
+    await fs.symlink(link, symlink, "dir")
+    const file = path.join(symlink, "log", "opencode.log")
+
+    await expect(
+      fileLogger(file).pipe(Effect.provide(NodeFileSystem.layer), Effect.scoped, Effect.runPromise),
+    ).rejects.toThrow(
+      `Symbolic link "${symlink}" points to missing target "${target}". Create the target directory or repair the symlink and try again.`,
+    )
+    expect(await fs.readlink(symlink)).toBe(link)
+    expect(await Bun.file(target).exists()).toBe(false)
+
+    await fs.mkdir(target, { recursive: true })
+    await fileLogger(file).pipe(Effect.provide(NodeFileSystem.layer), Effect.scoped, Effect.runPromise)
+    expect(await Bun.file(file).exists()).toBe(true)
+  },
+)

@@ -65,7 +65,29 @@ export function fileLogger(target = file(), id: string = runID()) {
   // Do not set batchWindow to 0; it causes high idle CPU usage.
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    yield* fs.makeDirectory(path.dirname(target), { recursive: true })
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          // mkdir cannot follow a dangling symlink above the log directory.
+          for (let current = path.dirname(target); current !== path.dirname(current); current = path.dirname(current)) {
+            const link = yield* fs.readLink(current).pipe(Effect.option)
+            if (Option.isNone(link)) continue
+            const missing = yield* fs.stat(current).pipe(
+              Effect.as(false),
+              Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound")),
+            )
+            if (!missing) continue
+            return yield* Effect.fail(
+              new Error(
+                `Symbolic link "${current}" points to missing target "${path.resolve(path.dirname(current), link.value)}". Create the target directory or repair the symlink and try again.`,
+                { cause },
+              ),
+            )
+          }
+          return yield* Effect.fail(cause)
+        }),
+      ),
+    )
     const logger = yield* Logger.toFile(formatter(id), target, { flag: "a" })
     yield* trim(target).pipe(
       Effect.ignore,
