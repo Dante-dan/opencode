@@ -249,7 +249,18 @@ const layer = Layer.effect(
               shell: windows,
             }),
           )
-          .pipe(Effect.flatMap(AppProcess.requireSuccess))
+          .pipe(
+            Effect.flatMap(AppProcess.requireSuccess),
+            Effect.tapError(() =>
+              Effect.gen(function* () {
+                // Setup may leave generated files in this newly created worktree.
+                yield* selected
+                  .remove({ directory: result.directory, force: true })
+                  .pipe(Effect.mapError((error) => operationError(selected.id, "remove", error)))
+                yield* changed(input.projectID, yield* ops.remove(input.projectID, result.directory))
+              }),
+            ),
+          )
       }
       return result
     }, Effect.scoped)

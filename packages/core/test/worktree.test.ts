@@ -136,8 +136,9 @@ function stored(projectID: Project.ID) {
       .all()
       .pipe(
         Effect.orDie,
-        Effect.map((rows): Array<{ directory: AbsolutePath; strategy: string | null }> =>
-          rows.toSorted((a, b) => a.directory.localeCompare(b.directory)),
+        Effect.map(
+          (rows): Array<{ directory: AbsolutePath; strategy: string | null }> =>
+            rows.toSorted((a, b) => a.directory.localeCompare(b.directory)),
         ),
       ),
   )
@@ -302,6 +303,75 @@ describe("Worktree", () => {
         created.directory,
       ])
       yield* worktree.remove({ directory: created.directory, force: true })
+    }),
+  )
+
+  it.live("rolls back failed setup and allows retrying the same worktree name", () =>
+    Effect.gen(function* () {
+      const input = yield* setup()
+      const worktree = yield* fixtureWorktree()
+      const parent = abs(path.join(input.root.path, "failed-setup"))
+      const target = abs(path.join(parent, "worktree"))
+      yield* input.db
+        .update(ProjectTable)
+        .set({ commands: { start: "bun -e \"await Bun.write('partial.txt', 'setup'); process.exit(1)\"" } })
+        .where(eq(ProjectTable.id, input.projectID))
+        .run()
+        .pipe(Effect.orDie)
+
+      const failed = yield* worktree.create({ directory: parent, name: "worktree" }).pipe(Effect.exit)
+
+      expect(Exit.isFailure(failed)).toBe(true)
+      expect(yield* stored(input.projectID)).toEqual([{ directory: input.sourceDirectory, strategy: null }])
+      expect(
+        yield* Effect.promise(() =>
+          fs.stat(target).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false)
+      const inventory = yield* Effect.promise(() => $`git worktree list --porcelain`.cwd(input.sourceDirectory).text())
+      expect(inventory).not.toContain(target)
+      yield* input.db
+        .update(ProjectTable)
+        .set({ commands: { start: "" } })
+        .where(eq(ProjectTable.id, input.projectID))
+        .run()
+        .pipe(Effect.orDie)
+      const created = yield* worktree.create({ directory: parent, name: "worktree" })
+      expect(created.directory).toBe(target)
+      yield* worktree.remove({ directory: created.directory, force: true })
+    }),
+  )
+
+  it.live("retains registration if removing a failed setup worktree fails", () =>
+    Effect.gen(function* () {
+      const input = yield* setup()
+      const worktree = yield* fixtureWorktree()
+      const git = yield* WorktreeGit.make
+      yield* worktree.transform((editor) =>
+        editor.add({
+          ...git,
+          id: Worktree.StrategyID.make("retained"),
+          remove: () => Effect.fail(new Error("cleanup failed")),
+        }),
+      )
+      yield* input.db
+        .update(ProjectTable)
+        .set({ commands: { start: 'bun -e "process.exit(1)"' } })
+        .where(eq(ProjectTable.id, input.projectID))
+        .run()
+        .pipe(Effect.orDie)
+      const parent = abs(path.join(input.root.path, "retained-setup"))
+      const target = abs(path.join(parent, "worktree"))
+
+      const error = yield* worktree.create({ directory: parent, name: "worktree" }).pipe(Effect.flip)
+
+      expect(error).toBeInstanceOf(Worktree.OperationError)
+      expect(yield* worktree.list()).toContainEqual({ directory: target, strategy: "retained" })
+      expect(yield* Effect.promise(() => fs.stat(target).then((stat) => stat.isDirectory()))).toBe(true)
+      yield* git.remove({ directory: target, force: true })
     }),
   )
 
