@@ -27,6 +27,24 @@ Run `LLM.stream(...)` instead of `generate` when you want incremental `LLMEvent`
 `LLM.request(...)`. The event stream is provider-neutral — same shape across OpenAI Chat, OpenAI Responses,
 Anthropic Messages, Gemini, Bedrock Converse, and any OpenAI-compatible deployment.
 
+### Strict OpenAI-compatible endpoints
+
+For endpoints that reject `tools: []`, set `compatibility.omitEmptyTools` to `true` on the model or provider in
+`opencode.json`. This omits `tools` when no tools are active, including after earlier tool calls:
+
+```json
+{
+  "providers": {
+    "strict": {
+      "compatibility": { "omitEmptyTools": true }
+    }
+  }
+}
+```
+
+The default remains `false` because some proxies require `tools` with tool history. Non-empty tool definitions
+are sent with either setting.
+
 ### Google Interactions
 
 `Google.configure({ apiKey }).interactions(modelID)` selects the Interactions API; `.model(modelID)` still selects

@@ -792,7 +792,7 @@ export const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (
     request.model.compatibility?.supportsStrictMode ?? detectSupportsStrictMode(provider, baseURL)
   const zaiToolStream =
     request.model.compatibility?.zaiToolStream ?? detectZaiToolStream(provider, baseURL, request.model.id)
-  const hasHistory = hasToolHistory(request.messages)
+  const sendEmptyTools = !request.model.compatibility?.omitEmptyTools && hasToolHistory(request.messages)
   const hasActiveTools = flattened.tools.length > 0
   const lowering = { ...options, cacheControl: options.cacheControl ?? declaredCacheControl(request) }
   return {
@@ -800,7 +800,7 @@ export const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (
     messages: yield* lowerMessages(flattened.request, lowering),
     tools:
       flattened.tools.length === 0
-        ? hasHistory
+        ? sendEmptyTools
           ? []
           : undefined
         : flattened.tools.map((tool) => lowerTool(tool, lowering, supportsStrictMode)),

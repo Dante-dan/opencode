@@ -99,6 +99,73 @@ describe("OpenAI-compatible Chat route", () => {
     }),
   )
 
+  it.effect("omits empty tools from the wire body after tool history", () =>
+    Effect.gen(function* () {
+      const response = yield* LLMClient.generate(
+        LLMRequest.update(request, {
+          model: OpenAICompatibleChat.route
+            .with({ provider: "strict", endpoint: { baseURL: "https://api.strict.test/v1" } })
+            .model({ id: "strict-model", compatibility: { omitEmptyTools: true } }),
+          messages: [
+            Message.user("What is the weather?"),
+            Message.assistant([ToolCallPart.make({ id: "call_1", name: "lookup", input: {} })]),
+            Message.tool({ id: "call_1", name: "lookup", result: "Sunny" }),
+          ],
+          tools: [],
+          toolChoice: ToolChoice.make({ type: "required" }),
+        }),
+      ).pipe(
+        Effect.provide(
+          dynamicResponse((input) =>
+            Effect.sync(() => {
+              expect(decodeJson(input.text)).not.toHaveProperty("tools")
+              expect(decodeJson(input.text)).not.toHaveProperty("tool_choice")
+              expect(decodeJson(input.text)).toMatchObject({
+                messages: [
+                  { role: "system", content: "You are concise." },
+                  { role: "user", content: "What is the weather?" },
+                  { role: "assistant", tool_calls: [{ id: "call_1", function: { name: "lookup" } }] },
+                  { role: "tool", tool_call_id: "call_1", content: '"Sunny"' },
+                ],
+              })
+              return input.respond(sseEvents(deltaChunk({ content: "Sunny" }), deltaChunk({}, "stop")), {
+                headers: { "content-type": "text/event-stream" },
+              })
+            }),
+          ),
+        ),
+      )
+
+      expect(response.text).toBe("Sunny")
+    }),
+  )
+
+  it.effect("preserves tool compatibility defaults and non-empty tools", () =>
+    Effect.gen(function* () {
+      const history = [
+        Message.assistant([ToolCallPart.make({ id: "call_1", name: "lookup", input: {} })]),
+        Message.tool({ id: "call_1", name: "lookup", result: "Sunny" }),
+      ]
+      const tool = ToolDefinition.make({ name: "lookup", description: "Lookup data", inputSchema: {} })
+      for (const omitEmptyTools of [undefined, false, true]) {
+        const selected = OpenAICompatibleChat.route
+          .with({ provider: "custom", endpoint: { baseURL: "https://api.custom.test/v1" } })
+          .model({ id: "custom-model", compatibility: { omitEmptyTools } })
+        const empty = yield* compileRequest(LLM.request({ model: selected, messages: history }))
+        if (omitEmptyTools) expect(empty.body.tools).toBeUndefined()
+        else expect(empty.body.tools).toEqual([])
+
+        const active = yield* compileRequest(
+          LLM.request({ model: selected, messages: history, tools: [tool], toolChoice: { type: "required" } }),
+        )
+        expect(active.body.tools).toMatchObject([{ function: { name: "lookup" } }])
+        expect(active.body.tool_choice).toBe("required")
+        const fresh = yield* compileRequest(LLM.request({ model: selected, prompt: "Hello" }))
+        expect(fresh.body.tools).toBeUndefined()
+      }
+    }),
+  )
+
   it.effect("places cache breakpoints only when compatibility declares the format", () =>
     Effect.gen(function* () {
       const prepare = (cacheFormat: "anthropic" | "alibaba" | undefined) =>

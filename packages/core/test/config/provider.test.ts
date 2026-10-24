@@ -241,7 +241,7 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
-  it.effect("passes configured stream usage compatibility to the runtime model", () =>
+  it.effect("passes configured Chat compatibility to the runtime model", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
       const models = yield* Model.Service
@@ -256,13 +256,16 @@ describe("ConfigProviderPlugin.Plugin", () => {
       yield* addPlugin([
         new Document({
           type: "document",
-          info: decode({ providers: { strict: { compatibility: { streamUsage: false } } } }),
+          info: decode({ providers: { strict: { compatibility: { streamUsage: false, omitEmptyTools: true } } } }),
         }),
       ])
 
       const catalog = required(yield* models.get(providerID, Model.ID.make("catalog")))
-      expect(catalog.compatibility).toEqual({ streamUsage: false })
-      expect((yield* ModelResolver.fromCatalogModel(catalog)).compatibility?.streamUsage).toBe(false)
+      expect(catalog.compatibility).toEqual({ streamUsage: false, omitEmptyTools: true })
+      expect((yield* ModelResolver.fromCatalogModel(catalog)).compatibility).toMatchObject({
+        streamUsage: false,
+        omitEmptyTools: true,
+      })
     }),
   )
 
