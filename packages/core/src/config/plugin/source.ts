@@ -164,11 +164,21 @@ const scan = Effect.fn("ConfigPluginSource.scan")(function* (
       const entrypoints: Host.Entrypoints = directory
         ? yield* Effect.sync(() => Host.resolve({ directory: operation.target }))
         : { server: pathToFileURL(operation.target).href }
-      if (!entrypoints.server) return []
+      if (!entrypoints.server) {
+        yield* Effect.logWarning("plugin directory has no server entrypoint", { target: operation.target })
+        return []
+      }
       if (directory) {
         const root = yield* fs.resolve(operation.target)
         const server = yield* fs.resolve(fileURLToPath(entrypoints.server))
-        if (!FSUtil.contains(root, server)) return []
+        if (!FSUtil.contains(root, server)) {
+          yield* Effect.logWarning("plugin server entrypoint resolves outside plugin directory", {
+            target: operation.target,
+            root,
+            server,
+          })
+          return []
+        }
       }
       const times = yield* Effect.forEach(
         [
