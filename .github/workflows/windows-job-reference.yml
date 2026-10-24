@@ -1,0 +1,23 @@
+# WIP branch-only validation. The native reference is not integrated or shipped.
+name: Windows Job reference
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reference:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Compile native reference
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dev = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+          $source = 'packages\util\native\windows-job-launch.c'
+          cmd /c "`"$dev`" -arch=x64 && cl /nologo /std:c11 /W4 /WX /utf-8 $source /Fe:windows-job-launch.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise failed exit, successful exit and argv
+        shell: pwsh
+        run: node packages/util/native/windows-job-reference.cjs windows-job-launch.exe
