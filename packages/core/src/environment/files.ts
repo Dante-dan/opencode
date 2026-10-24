@@ -44,6 +44,8 @@ export interface FilesImpl {
   readonly stat: (path: string) => Effect.Effect<FileInfo, NotFound | Failed>
   /** Follows a final symlink to the listed directory while preserving each returned entry's own type. */
   readonly list: (path: string) => Effect.Effect<ReadonlyArray<DirEntry>, NotFound | WrongKind | Failed>
+  /** Copies permission bits from the followed source to the followed destination. */
+  readonly copyPermissions: (from: string, to: string) => Effect.Effect<void, Failed>
   readonly remove: (path: string) => Effect.Effect<void, Failed>
   readonly move: (from: string, to: string) => Effect.Effect<void, NotFound | Failed>
   readonly mkdir: (path: string) => Effect.Effect<void, Failed>

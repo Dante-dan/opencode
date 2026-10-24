@@ -310,6 +310,7 @@ const layer = (options: Options) =>
             write: (path, bytes) => withFiles(path, (files) => files.write(path, bytes)),
             stat: (path) => withFiles(path, (files) => files.stat(path)),
             list: (path) => withFiles(path, (files) => files.list(path)),
+            copyPermissions: (from, to) => withFiles(to, (files) => files.copyPermissions(from, to)),
             remove: (path) => withFiles(path, (files) => files.remove(path)),
             move: (from, to) => withFiles(from, (files) => files.move(from, to)),
             mkdir: (path) => withFiles(path, (files) => files.mkdir(path)),

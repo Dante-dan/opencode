@@ -102,6 +102,15 @@ export const makeMemoryDriver = (): MemoryDriver => {
           .map(([entry, child]) => ({ name: path.posix.basename(entry), type: child.type satisfies FileType }))
           .sort((a, b) => a.name.localeCompare(b.name))
       }),
+    // Memory files have no access restrictions or POSIX permission bits.
+    copyPermissions: (from, to) =>
+      Effect.try({
+        try: () => {
+          if (!nodes.has(resolveKey(from, true) ?? key(from))) throw new Error(`File does not exist: ${from}`)
+          if (!nodes.has(resolveKey(to, true) ?? key(to))) throw new Error(`File does not exist: ${to}`)
+        },
+        catch: (cause) => failed(to, cause),
+      }),
     remove: (value) =>
       Effect.sync(() => {
         const target = resolveKey(value, false) ?? key(value)

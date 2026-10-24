@@ -53,6 +53,11 @@ export const makeLocalDriver = (spawner: ChildProcessSpawner["Service"]): Driver
         await fs.mkdir(path.dirname(value), { recursive: true })
         await fs.writeFile(value, bytes)
       }),
+    copyPermissions: (from, to) =>
+      attempt(to, async () => {
+        const source = await fs.stat(from)
+        await fs.chmod(to, source.mode & 0o7777)
+      }),
     remove: (value) => attempt(value, () => fs.rm(value, { recursive: true, force: true })),
     move: (from, to) =>
       Effect.gen(function* () {

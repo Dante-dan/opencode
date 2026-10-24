@@ -478,6 +478,32 @@ describe("PatchTool", () => {
     ),
   )
 
+  it.live("preserves permission bits when moving a script", () =>
+    withTempTool((directory, registry) =>
+      Effect.gen(function* () {
+        // Windows does not support POSIX executable and group permission bits.
+        if (process.platform === "win32") return
+        for (const mode of [0o755, 0o640]) {
+          const source = path.join(directory, "script.sh")
+          const destination = path.join(directory, "nested", "renamed.sh")
+          yield* Effect.promise(() => fs.writeFile(source, "#!/bin/sh\necho before\n"))
+          yield* Effect.promise(() => fs.chmod(source, mode))
+          expect(
+            yield* executeTool(
+              registry,
+              call(
+                "*** Begin Patch\n*** Update File: script.sh\n*** Move to: nested/renamed.sh\n@@\n-echo before\n+echo after\n*** End Patch",
+              ),
+            ),
+          ).toMatchObject({ status: "completed" })
+          expect(yield* exists(source)).toBe(false)
+          expect(yield* Effect.promise(() => fs.readFile(destination, "utf8"))).toBe("#!/bin/sh\necho after\n")
+          expect((yield* Effect.promise(() => fs.stat(destination))).mode & 0o777).toBe(mode)
+        }
+      }),
+    ),
+  )
+
   it.live("moves a symlink without deleting its target", () =>
     withTempTool((directory, registry) =>
       Effect.gen(function* () {
@@ -486,6 +512,7 @@ describe("PatchTool", () => {
         const source = path.join(directory, "link.txt")
         const moved = path.join(directory, "moved.txt")
         yield* Effect.promise(() => fs.writeFile(target, "before\n"))
+        yield* Effect.promise(() => fs.chmod(target, 0o750))
         yield* Effect.promise(() => fs.symlink(target, source))
         yield* executeTool(
           registry,
@@ -496,6 +523,7 @@ describe("PatchTool", () => {
         expect(yield* exists(source)).toBe(false)
         expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("before\n")
         expect(yield* Effect.promise(() => fs.readFile(moved, "utf8"))).toBe("after\n")
+        expect((yield* Effect.promise(() => fs.stat(moved))).mode & 0o777).toBe(0o750)
       }),
     ),
   )
