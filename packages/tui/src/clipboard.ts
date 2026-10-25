@@ -53,7 +53,7 @@ export function createClipboardAdapter(clipboard: CoreClipboardService): OwnedCl
     async write(text) {
       // OpenTUI rejects NUL before any destination; host clipboard text cannot contain it.
       const result = await clipboard.writeText(text.replaceAll("\0", ""), {
-        destination: "all-available",
+        destination: "best-available",
         selection: "clipboard",
       })
       if (result.host.status === "written" || result.terminal.status === "attempted") return

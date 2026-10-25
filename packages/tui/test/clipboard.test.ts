@@ -66,7 +66,12 @@ test("adapts OpenTUI image and text reads", async () => {
   expect(requests).toEqual([{ preferredTypes: ["image/png", "text/plain"], selection: "clipboard" }])
 })
 
-test("uses all available routes but skips the process host remotely", async () => {
+test.each([
+  { remote: false, status: "written" as const, expected: { host: 1, terminal: 0 } },
+  { remote: false, status: "unsupported" as const, expected: { host: 1, terminal: 1 } },
+  { remote: false, status: "failed" as const, expected: { host: 1, terminal: 1 } },
+  { remote: true, status: "written" as const, expected: { host: 0, terminal: 1 } },
+])("chooses clipboard route for remote=$remote host=$status", async ({ remote, status, expected }) => {
   const writes = { host: 0, terminal: 0 }
   const host: HostClipboardService = {
     maxWriteBytes: 8 * 1024 * 1024,
@@ -75,7 +80,8 @@ test("uses all available routes but skips the process host remotely", async () =
     },
     async writeText() {
       writes.host++
-      return { status: "written" }
+      if (status === "failed") return { status, error: new Error("native clipboard failed") }
+      return { status }
     },
     async clear() {
       return { status: "cleared" }
@@ -86,7 +92,7 @@ test("uses all available routes but skips the process host remotely", async () =
     createClipboard({
       host,
       terminal: {
-        remote: true,
+        remote,
         writeText() {
           writes.terminal++
           return { status: "attempted", capability: "supported" }
@@ -99,7 +105,7 @@ test("uses all available routes but skips the process host remotely", async () =
   )
 
   expect(await clipboard.write("hello")).toBeUndefined()
-  expect(writes).toEqual({ host: 0, terminal: 1 })
+  expect(writes).toEqual(expected)
 })
 
 test("removes NUL characters before writing", async () => {
@@ -138,5 +144,5 @@ test("rejects only when no clipboard route accepted the write", async () => {
 
   expect(await fallback.write("hello")).toBeUndefined()
   expect(await clipboard.write("hello").then(undefined, (error) => error)).toBe(failure)
-  expect(writes).toEqual([["hello", { destination: "all-available", selection: "clipboard" }]])
+  expect(writes).toEqual([["hello", { destination: "best-available", selection: "clipboard" }]])
 })
