@@ -173,13 +173,7 @@ export const layer = (options?: Options) =>
           recovery,
           run: execution.resume(recovery.childSessionID).pipe(
             Effect.andThen(store.context(recovery.childSessionID)),
-            Effect.map((messages) => {
-              const assistant = messages.findLast(
-                (message) =>
-                  message.type === "assistant" && message.time.completed !== undefined && message.error === undefined,
-              )
-              return SubagentCompletion.text(assistant)
-            }),
+            Effect.map(SubagentCompletion.text),
           ),
         })
         yield* jobs.background(background.id)

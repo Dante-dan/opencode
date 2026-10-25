@@ -7,7 +7,14 @@ import type { SessionMessage } from "./message.js"
 
 export const NO_TEXT = "Subagent completed without a text response."
 
-export function text(message: SessionMessage.Info | undefined) {
+export function text(messages: readonly SessionMessage.Info[]) {
+  const message = messages.findLast(
+    (message) =>
+      message.type === "assistant" &&
+      message.time.completed !== undefined &&
+      message.error === undefined &&
+      message.content.some((part) => part.type === "text" && part.text.length > 0),
+  )
   if (message?.type !== "assistant") return NO_TEXT
   return (
     message.content
