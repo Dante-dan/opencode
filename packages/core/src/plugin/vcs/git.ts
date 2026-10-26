@@ -417,7 +417,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
         "--patch",
         "--no-ext-diff",
         "--no-renames",
-        `--unified=${options?.context ?? 3}`,
+        `--unified=${Math.min(options?.context ?? 3, PATCH_CONTEXT_LINES)}`,
         ref,
         ...(options?.target ? [options.target] : []),
         "--",
@@ -435,7 +435,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
         "--patch",
         "--no-ext-diff",
         "--no-renames",
-        `--unified=${options?.context ?? 3}`,
+        `--unified=${Math.min(options?.context ?? 3, PATCH_CONTEXT_LINES)}`,
         ref,
         ...(options?.target ? [options.target] : []),
         "--",
@@ -460,7 +460,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
         "--patch",
         "--no-ext-diff",
         "--no-renames",
-        `--unified=${options?.context ?? 3}`,
+        `--unified=${Math.min(options?.context ?? 3, PATCH_CONTEXT_LINES)}`,
         "--",
         "/dev/null",
         file,
@@ -515,7 +515,13 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
 
   const worktreePatch = Effect.fn("VcsGit.worktreePatch")(function* (cwd: string, options?: PatchOptions) {
     const result = yield* run(
-      ["diff", "--patch", "--no-ext-diff", "--no-renames", `--unified=${options?.context ?? 3}`],
+      [
+        "diff",
+        "--patch",
+        "--no-ext-diff",
+        "--no-renames",
+        `--unified=${Math.min(options?.context ?? 3, PATCH_CONTEXT_LINES)}`,
+      ],
       { cwd, maxOutputBytes: options?.maxOutputBytes },
     )
     return { text: result.text(), truncated: result.truncated } satisfies Patch

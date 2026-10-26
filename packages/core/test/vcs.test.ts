@@ -1,5 +1,6 @@
 import { $ } from "bun"
 import { describe, expect } from "bun:test"
+import { applyPatch } from "diff"
 import fs from "fs/promises"
 import path from "path"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect"
@@ -829,6 +830,51 @@ describe("Vcs", () => {
         const tight = yield* vcs.diff("working", { context: 1 })
         expect(tight[0].patch).toContain("line-9")
         expect(tight[0].patch).not.toContain("line-0")
+      }),
+    ),
+  )
+
+  it.live("bounds full-file context for Windows Git without losing patch contents", () =>
+    withGit((directory) =>
+      Effect.gen(function* () {
+        const before = "one\ntwo\nthree\nfour\nfive\n"
+        const after = "one\nchanged\nthree\nfour\nfive\n\nnew ascii line at eof\n"
+        yield* Effect.promise(async () => {
+          await fs.writeFile(path.join(directory, "file.txt"), before)
+          await commitAll(directory, "initial")
+          await $`git config diff.interHunkContext 3`.cwd(directory).quiet()
+          await fs.writeFile(path.join(directory, "file.txt"), after)
+        })
+        const vcs = yield* Vcs.Service
+        const processes = yield* AppProcess.Service
+        const context = host()
+        const args: string[] = []
+        yield* VcsGitPlugin.Plugin.effect({
+          ...context,
+          vcs: { ...context.vcs, transform: vcs.transform, reload: vcs.reload },
+        }).pipe(
+          Effect.provideService(
+            AppProcess.Service,
+            AppProcess.Service.of({
+              ...processes,
+              run: (command, options) => {
+                if ("args" in command) args.push(...command.args.filter((arg) => arg.startsWith("--unified=")))
+                return processes.run(command, options)
+              },
+            }),
+          ),
+        )
+
+        for (const context of [undefined, 2 ** 30, 2_147_483_647]) {
+          const diff = yield* vcs.diff("working", { context })
+          expect(diff).toHaveLength(1)
+          expect(diff[0].patch).toContain(" one")
+          expect(diff[0].patch).toContain(" five")
+          expect(applyPatch(before, diff[0].patch)).toBe(after)
+        }
+        expect(args).toHaveLength(3)
+        // xdiff adds the configured inter-hunk context after doubling ctxlen on Windows.
+        expect(args.every((arg) => Number(arg.slice("--unified=".length)) * 2 + 3 <= 2_147_483_647)).toBeTrue()
       }),
     ),
   )

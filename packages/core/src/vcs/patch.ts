@@ -2,10 +2,12 @@ export * as VcsPatch from "./patch.js"
 
 import { formatPatch, structuredPatch } from "diff"
 
-// Effectively "full file" context; adapters use it when no context is requested.
-export const PATCH_CONTEXT_LINES = 2_147_483_647
 export const MAX_PATCH_BYTES = 10_000_000
 export const MAX_TOTAL_PATCH_BYTES = 10_000_000
+// Every context line consumes bytes, so a complete patch cannot need more
+// context lines than its byte budget. This stays effectively full-file while
+// leaving room when Windows xdiff computes 2 * ctxlen + interhunkctxlen.
+export const PATCH_CONTEXT_LINES = MAX_PATCH_BYTES
 
 export interface Patch {
   readonly text: string
