@@ -150,13 +150,31 @@ export const withVariant = (
         variant: id,
       }),
     )
+  let body = Provider.mergeOverlay(model.body, variant?.body)
+  if (
+    variant &&
+    model.package === "@opencode/ai/providers/amazon-bedrock" &&
+    Schema.is(
+      Schema.Struct({
+        additionalModelRequestFields: Schema.Struct({
+          thinking: Schema.Struct({ type: Schema.Literal("disabled") }),
+        }),
+      }),
+    )(body)
+  ) {
+    // Bedrock rejects adaptive-only fields inherited by disabled thinking.
+    body = {
+      ...body,
+      additionalModelRequestFields: { ...body.additionalModelRequestFields, thinking: { type: "disabled" } },
+    }
+  }
   return Effect.succeed(
     variant
       ? {
           ...model,
           settings: Provider.mergeOverlay(model.settings, Provider.modelSettings(variant.settings)),
           headers: Provider.mergeHeaders(model.headers, variant.headers),
-          body: Provider.mergeOverlay(model.body, variant.body),
+          body,
         }
       : model,
   )
