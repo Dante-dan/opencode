@@ -107,6 +107,7 @@ export function update(adapter: Adapter, event: SessionEvent.DurableEvent) {
       "session.model.selected": (event) =>
         Effect.gen(function* () {
           const previous = event.data.previous ?? (yield* adapter.getModel())
+          if (!previous) return
           yield* adapter.appendMessage(
             SessionMessage.ModelSelected.make({
               id: SessionMessage.ID.fromEvent(event.id),

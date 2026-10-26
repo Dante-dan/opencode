@@ -2057,6 +2057,7 @@ describe("SessionRunnerLLM", () => {
     yield* s.bus.publish(SessionEvent.ModelSelected, {
       sessionID,
       model: { id: ID.make("replacement"), providerID: Provider.ID.make("fake") },
+      previous: { id: ID.make("fake-model"), providerID: Provider.ID.make("fake") },
     })
     s.systemBaseline = "Replacement context"
     yield* s.runPrompt("Third")

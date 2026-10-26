@@ -1212,7 +1212,35 @@ describe("Session.create", () => {
     }),
   )
 
-  it.effect("ignores a model switch when the selected model is unchanged", () =>
+  it.effect("does not narrate the first explicit model selection after an implicit model step", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const bus = yield* Bus.Service
+      const created = yield* session.create({ location, agent: Agent.ID.make("build") })
+      const model = Model.Ref.make({
+        id: Model.ID.make("sonnet"),
+        providerID: Provider.ID.anthropic,
+        variant: Model.VariantID.make("high"),
+      })
+      yield* bus.publish(SessionEvent.Step.Started, {
+        sessionID: created.id,
+        assistantMessageID: SessionMessage.ID.make("msg_implicit_model"),
+        agent: Agent.ID.make("build"),
+        model,
+        started: 0,
+      })
+
+      expect((yield* session.get(created.id)).model).toBeUndefined()
+      yield* session.switchModel({ sessionID: created.id, model })
+
+      expect(yield* session.get(created.id)).toMatchObject({ model })
+      expect(yield* session.messages({ sessionID: created.id, order: "asc" })).toMatchObject([
+        { type: "assistant", model },
+      ])
+    }),
+  )
+
+  it.effect("persists an initial model selection without a switch notice and ignores repeats", () =>
     Effect.gen(function* () {
       const session = yield* Session.Service
       const created = yield* session.create({ location })
@@ -1221,6 +1249,7 @@ describe("Session.create", () => {
       yield* session.switchModel({ sessionID: created.id, model })
       yield* session.switchModel({ sessionID: created.id, model })
 
+      expect(yield* session.messages({ sessionID: created.id, order: "asc" })).toEqual([])
       const { db } = yield* Database.Service
       expect(
         yield* db.select().from(EventTable).where(eq(EventTable.aggregate_id, created.id)).all().pipe(Effect.orDie),
