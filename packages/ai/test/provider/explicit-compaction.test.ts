@@ -223,7 +223,18 @@ for (const model of [
       Effect.sync(() => {
         if (new URL(request.url).pathname.endsWith("/compact"))
           return respond(JSON.stringify({ object: "response.compaction", output: retainedItems }))
-        expect(JSON.parse(text).input).toEqual(retainedItems)
+        expect(JSON.parse(text).input).toEqual(
+          retainedItems.map((item) =>
+            item.type === "message" && item.role === "user"
+              ? {
+                  ...item,
+                  content: item.content.map((part) =>
+                    part.type === "input_image" ? { ...part, detail: "auto" } : part,
+                  ),
+                }
+              : item,
+          ),
+        )
         return respond(sseEvents({ type: "response.completed", response: { id: "resp_1" } }), {
           headers: { "content-type": "text/event-stream" },
         })
@@ -375,7 +386,9 @@ for (const model of [
               output: [{ type: "message", role: "user", content: images }, checkpoint],
             }),
           )
-        expect(JSON.parse(text).input[0].content).toEqual(images)
+        expect(JSON.parse(text).input[0].content).toEqual(
+          images.map((image) => ({ ...image, detail: image.detail ?? "auto" })),
+        )
         return respond(sseEvents({ type: "response.completed", response: { id: "resp_1" } }))
       }),
     ),
