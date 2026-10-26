@@ -1134,6 +1134,31 @@ test("providers: OpenCode Go connects with its own methods, not the Console sign
   expect(attempts).toEqual([])
 })
 
+// The success toast must not promise inference models for tool-only integrations.
+for (const row of [
+  { id: "firecrawl", name: "Firecrawl", models: {} },
+  { id: "openrouter", name: "OpenRouter", models: { model: { id: "model", name: "Model" } } },
+]) {
+  test(`providers: ${row.name} connection feedback matches its models`, async ({ page }) => {
+    const { settings } = await open(page, {
+      provider: { all: [{ id: row.id, name: row.name, models: row.models }], connected: [row.id], default: {} },
+      integrations: [{ id: row.id, name: row.name, methods: [{ type: "key" }], connections: [] }],
+    })
+
+    await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+    await settings.getByRole("button", { name: "Show more providers", exact: true }).click()
+    await page.getByRole("dialog").locator(`[data-provider-id="${row.id}"]`).click()
+    const dialog = page.getByRole("dialog", { name: `Connect ${row.name}`, exact: true })
+    await dialog.getByPlaceholder("API key").fill("test-key")
+    await dialog.getByPlaceholder("API key").press("Enter")
+    await expect(page.getByText(`${row.name} connected`, { exact: true })).toBeVisible()
+    const description = page.getByText(`${row.name} models are now available to use.`, { exact: true })
+
+    if (row.id === "firecrawl") await expect(description).toHaveCount(0)
+    if (row.id === "openrouter") await expect(description).toBeVisible()
+  })
+}
+
 test("providers: the free tier upsell opens Go on its own, sized to its content", async ({ page }) => {
   const view = await openSession(page, { name: "FreeTier", integrations: consoleIntegrations })
   await view.push([

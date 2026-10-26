@@ -527,7 +527,9 @@ function ProviderConnection(props: {
         variant: "success",
         icon: "circle-check",
         title: language.t("provider.connect.toast.connected.title", { provider: provider().name }),
-        description: language.t("provider.connect.toast.connected.description", { provider: provider().name }),
+        description: connectionModels().length
+          ? language.t("provider.connect.toast.connected.description", { provider: provider().name })
+          : undefined,
       })
 
       // Like the TUI, every connection continues to that provider's models, not just the first.
