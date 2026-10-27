@@ -186,7 +186,11 @@ export function createReviewModel(input: {
     enabled: input.demand.details > 0 && view().server.connected && !!view().project?.vcs,
     queryFn: () =>
       view()
-        .server.client.vcs.diff({ location: { directory: view().directory }, mode: "working" })
+        .server.client.vcs.diff({
+          location: { directory: view().directory },
+          mode: "working",
+          untracked: "folders",
+        })
         .then((result) => result.data)
         .catch((error) => {
           console.debug("[session-review] failed to load session details diff", { error })

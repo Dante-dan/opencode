@@ -105,6 +105,7 @@ test("the project menu loads changes on demand and opens review", async ({ page 
   await page.locator('[data-slot="session-location-trigger"]').click()
   const menu = page.locator('[data-slot="session-location-card"]')
   await changes.arrived
+  expect(requests.map((url) => new URL(url).searchParams.get("untracked"))).toEqual(["folders"])
   await expect(menu.getByRole("menuitem", { name: "Loading changes…", exact: true })).toBeVisible()
   changes.release()
   const workspace = menu.getByRole("menuitem", { name: "Local repository", exact: true })
