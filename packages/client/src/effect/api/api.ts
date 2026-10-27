@@ -696,6 +696,23 @@ export type SessionLogOutput =
               readonly status?: number | undefined
               readonly response?: { readonly body: string } | undefined
               readonly retryAfterMs?: number | undefined
+              readonly stream?:
+                | {
+                    readonly chunks?: number | undefined
+                    readonly bytes?: number | undefined
+                    readonly elapsedMs?: number | undefined
+                    readonly decodedEvents?: number | undefined
+                    readonly lastEventType?: string | undefined
+                    readonly terminal?: boolean | undefined
+                    readonly contentType?:
+                      | "text/event-stream"
+                      | "application/json"
+                      | "application/x-ndjson"
+                      | "application/octet-stream"
+                      | undefined
+                    readonly encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd" | undefined
+                  }
+                | undefined
             }
           }
         }
@@ -864,6 +881,23 @@ export type SessionLogOutput =
               readonly status?: number | undefined
               readonly response?: { readonly body: string } | undefined
               readonly retryAfterMs?: number | undefined
+              readonly stream?:
+                | {
+                    readonly chunks?: number | undefined
+                    readonly bytes?: number | undefined
+                    readonly elapsedMs?: number | undefined
+                    readonly decodedEvents?: number | undefined
+                    readonly lastEventType?: string | undefined
+                    readonly terminal?: boolean | undefined
+                    readonly contentType?:
+                      | "text/event-stream"
+                      | "application/json"
+                      | "application/x-ndjson"
+                      | "application/octet-stream"
+                      | undefined
+                    readonly encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd" | undefined
+                  }
+                | undefined
             }
             readonly finish?: "content-filter" | undefined
             readonly rawFinish?: string | undefined
@@ -1053,6 +1087,23 @@ export type SessionLogOutput =
               readonly status?: number | undefined
               readonly response?: { readonly body: string } | undefined
               readonly retryAfterMs?: number | undefined
+              readonly stream?:
+                | {
+                    readonly chunks?: number | undefined
+                    readonly bytes?: number | undefined
+                    readonly elapsedMs?: number | undefined
+                    readonly decodedEvents?: number | undefined
+                    readonly lastEventType?: string | undefined
+                    readonly terminal?: boolean | undefined
+                    readonly contentType?:
+                      | "text/event-stream"
+                      | "application/json"
+                      | "application/x-ndjson"
+                      | "application/octet-stream"
+                      | undefined
+                    readonly encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd" | undefined
+                  }
+                | undefined
             }
             readonly content?:
               | readonly [
@@ -1101,6 +1152,23 @@ export type SessionLogOutput =
               readonly status?: number | undefined
               readonly response?: { readonly body: string } | undefined
               readonly retryAfterMs?: number | undefined
+              readonly stream?:
+                | {
+                    readonly chunks?: number | undefined
+                    readonly bytes?: number | undefined
+                    readonly elapsedMs?: number | undefined
+                    readonly decodedEvents?: number | undefined
+                    readonly lastEventType?: string | undefined
+                    readonly terminal?: boolean | undefined
+                    readonly contentType?:
+                      | "text/event-stream"
+                      | "application/json"
+                      | "application/x-ndjson"
+                      | "application/octet-stream"
+                      | undefined
+                    readonly encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd" | undefined
+                  }
+                | undefined
             }
           }
         }
@@ -1163,6 +1231,23 @@ export type SessionLogOutput =
               readonly status?: number | undefined
               readonly response?: { readonly body: string } | undefined
               readonly retryAfterMs?: number | undefined
+              readonly stream?:
+                | {
+                    readonly chunks?: number | undefined
+                    readonly bytes?: number | undefined
+                    readonly elapsedMs?: number | undefined
+                    readonly decodedEvents?: number | undefined
+                    readonly lastEventType?: string | undefined
+                    readonly terminal?: boolean | undefined
+                    readonly contentType?:
+                      | "text/event-stream"
+                      | "application/json"
+                      | "application/x-ndjson"
+                      | "application/octet-stream"
+                      | undefined
+                    readonly encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd" | undefined
+                  }
+                | undefined
             }
             readonly inputID?: SessionMessage.ID | undefined
             readonly cost?: Money.USD | undefined

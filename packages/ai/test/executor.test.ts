@@ -138,6 +138,10 @@ describe("RequestExecutor", () => {
       )
       expect(error.reason.http).toMatchObject({ status: 200, url: secretRequest.url })
       expect(error.reason.cause).toMatchObject({ code: "ECONNRESET" })
+      expect(error.reason.stream).toMatchObject({ chunks: 0, bytes: 0 })
+      expect(error.reason.stream?.contentType).toBeUndefined()
+      expect(error.reason.stream?.encoding).toBeUndefined()
+      expect(JSON.stringify(error.reason.stream)).not.toContain("secret")
       expect(error.reason).toMatchObject({
         _tag: "Transport",
         transport: "http",
@@ -153,7 +157,13 @@ describe("RequestExecutor", () => {
               controller.error(systemError("ECONNRESET", "disconnected query-secret-123 header-secret-456"))
             },
           }),
-          {},
+          {
+            headers: {
+              "content-type": "secret-content-type",
+              "content-encoding": "secret-encoding",
+              "x-secret": "secret",
+            },
+          },
         ),
       ),
     ),
@@ -211,6 +221,12 @@ describe("RequestExecutor", () => {
       expect(error.reason.cause).toBeInstanceOf(TypeError)
       expect(error.reason.http).toMatchObject({ status: 200 })
       expect(error.reason).toMatchObject({ _tag: "Transport", operation: "read", code: "ECONNRESET" })
+      expect(error.reason.stream).toMatchObject({
+        chunks: 1,
+        bytes: new TextEncoder().encode('data: {"type":"ping"}\n\n').byteLength,
+        contentType: "text/event-stream",
+      })
+      expect(error.reason.stream?.elapsedMs).toBeGreaterThanOrEqual(0)
       expect(isRetryable(error)).toBeTrue()
     }).pipe(
       Effect.provide(
@@ -230,6 +246,7 @@ describe("RequestExecutor", () => {
       expectAIError(error)
       expect(error.message).toBe("Connection lost while reading the response")
       expect(error.reason).toMatchObject({ _tag: "Transport", operation: "read", code: undefined })
+      expect(error.reason.stream).toMatchObject({ chunks: 1, bytes: 23 })
       expect(isRetryable(error)).toBeTrue()
     }).pipe(Effect.provide(truncatedStream(['data: {"type":"ping"}\n\n'], new DOMException("aborted", "AbortError")))),
   )

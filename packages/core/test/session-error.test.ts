@@ -29,6 +29,32 @@ import { SessionRunnerRetry } from "@opencode/core/session/runner/retry"
 const llm = (reason: AIError["reason"]) => new AIError({ reason })
 
 describe("toSessionError", () => {
+  test("projects structured stream progress without copying provider payloads", () => {
+    const stream = { chunks: 2, bytes: 100, decodedEvents: 3, lastEventType: "reasoning-delta", terminal: false }
+    const error = toSessionError(
+      new AIError({
+        reason: new TransportError({
+          message: "Connection lost while reading the response",
+          transport: "http",
+          operation: "read",
+          cause: new Error("secret-payload"),
+          http: new HttpContext({
+            url: "https://provider.test?key=secret",
+            status: 200,
+            headers: { secret: "secret" },
+          }),
+          stream,
+        }),
+      }),
+    )
+    expect(error).toEqual({
+      type: "provider.transport",
+      message: "Connection lost while reading the response",
+      status: 200,
+      stream,
+    })
+    expect(JSON.stringify(error)).not.toContain("secret")
+  })
   test("maps every AI error reason to the open wire type", () => {
     expect(toSessionError(llm(new RateLimitError({ message: "rate", retryAfterMs: 123 })))).toEqual({
       type: "provider.rate-limit",
@@ -99,7 +125,8 @@ describe("toSessionError", () => {
     expect(SessionRunnerRetry.isRetryable(free)).toBe(false)
     expect(toSessionError(free)).toEqual({
       type: "provider.free-limit",
-      message: "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+      message:
+        "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
       status: 429,
       response: { body: JSON.stringify(freeBody) },
       retryAfterMs: 3_600_000,

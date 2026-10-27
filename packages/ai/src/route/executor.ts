@@ -1,4 +1,4 @@
-import { Cause, Effect, Layer, Option, Schema, Stream } from "effect"
+import { Cause, Clock, Effect, Layer, Option, Schema, Stream } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -159,12 +159,17 @@ const rootCause = (error: unknown): unknown =>
     : error
 
 const CONNECTION_LOST = "Connection lost while reading the response"
+const streamContentType = Schema.decodeUnknownOption(
+  Schema.Literals(["text/event-stream", "application/json", "application/x-ndjson", "application/octet-stream"]),
+)
+const streamEncoding = Schema.decodeUnknownOption(Schema.Literals(["identity", "gzip", "deflate", "br", "zstd"]))
 
 const httpError = (input: {
   readonly error: unknown
   readonly request: HttpClientRequest.HttpClientRequest
   readonly operation: HttpOperation
   readonly http?: HttpContext
+  readonly stream?: AIError["reason"]["stream"]
 }) => {
   const request = HttpClientError.isHttpClientError(input.error) ? input.error.request : input.request
   const transportError = (failure: { readonly message: string; readonly code?: string | undefined }) =>
@@ -177,6 +182,7 @@ const httpError = (input: {
         operation: input.operation,
         code: failure.code,
         url: request.url,
+        stream: input.stream,
       }),
     })
 
@@ -208,10 +214,48 @@ const httpError = (input: {
 }
 
 export const responseStream = (response: HttpClientResponse.HttpClientResponse): Stream.Stream<Uint8Array, AIError> =>
-  response.stream.pipe(
-    Stream.mapError((error) =>
-      httpError({ error, request: response.request, operation: "read", http: responseHttp(response) }),
-    ),
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const started = yield* Clock.monotonicTimeNanos
+      let chunks = 0
+      let bytes = 0
+      return response.stream.pipe(
+        Stream.map((chunk) => {
+          chunks = Math.min(Number.MAX_SAFE_INTEGER, chunks + 1)
+          bytes = Math.min(Number.MAX_SAFE_INTEGER, bytes + chunk.byteLength)
+          return chunk
+        }),
+        Stream.catch((error) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const elapsedMs = Math.min(
+                Number.MAX_SAFE_INTEGER,
+                Math.max(0, Number(((yield* Clock.monotonicTimeNanos) - started) / 1_000_000n)),
+              )
+              return Stream.fail(
+                httpError({
+                  error,
+                  request: response.request,
+                  operation: "read",
+                  http: responseHttp(response),
+                  stream: {
+                    chunks,
+                    bytes,
+                    elapsedMs,
+                    contentType: Option.getOrUndefined(
+                      streamContentType(response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase()),
+                    ),
+                    encoding: Option.getOrUndefined(
+                      streamEncoding(response.headers["content-encoding"]?.toLowerCase()),
+                    ),
+                  },
+                }),
+              )
+            }),
+          ),
+        ),
+      )
+    }),
   )
 
 export const stream = (

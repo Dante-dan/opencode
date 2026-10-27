@@ -116,12 +116,15 @@ export type ToolTextContent = { type: "text"; text: string }
 
 export type ToolFileContent = { type: "file"; uri: string; mime: string; name?: string | null }
 
-export type SessionStructuredError = {
-  type: string
-  message: string
-  status?: number
-  response?: { body: string }
-  retryAfterMs?: number
+export type SessionProviderStreamProgress = {
+  chunks?: number
+  bytes?: number
+  elapsedMs?: number
+  decodedEvents?: number
+  lastEventType?: string
+  terminal?: boolean
+  contentType?: "text/event-stream" | "application/json" | "application/x-ndjson" | "application/octet-stream"
+  encoding?: "identity" | "gzip" | "deflate" | "br" | "zstd"
 }
 
 export type SessionActive = { type: "running" }
@@ -493,27 +496,13 @@ export type SessionMessageAssistantReasoning = {
 
 export type ToolContent = ToolTextContent | ToolFileContent
 
-export type SessionMessageAssistantRetry = { attempt: number; at: number; error: SessionStructuredError }
-
-export type SessionMessageCompactionFailed = {
-  type: "compaction"
-  id: SessionMessageID
-  metadata?: { [x: string]: JsonValue }
-  time: { created: number }
-  status: "failed"
-  reason: "auto" | "manual"
-  error: SessionStructuredError
-  cost?: MoneyUSD
-  tokens?: TokenUsageInfo
-}
-
-export type SessionMessageIdle = {
-  id: SessionMessageID
-  metadata?: { [x: string]: JsonValue }
-  time: { created: number }
-  type: "idle"
-  outcome: "succeeded" | "failed" | "interrupted"
-  error?: SessionStructuredError
+export type SessionStructuredError = {
+  type: string
+  message: string
+  status?: number
+  response?: { body: string }
+  retryAfterMs?: number
+  stream?: SessionProviderStreamProgress
 }
 
 export type SessionInboxSynthetic = {
@@ -1007,6 +996,29 @@ export type SessionMessageToolStateError = {
   error: SessionStructuredError
   content?: [ToolContent, ...Array<ToolContent>]
   metadata?: { [x: string]: JsonValue }
+}
+
+export type SessionMessageAssistantRetry = { attempt: number; at: number; error: SessionStructuredError }
+
+export type SessionMessageCompactionFailed = {
+  type: "compaction"
+  id: SessionMessageID
+  metadata?: { [x: string]: JsonValue }
+  time: { created: number }
+  status: "failed"
+  reason: "auto" | "manual"
+  error: SessionStructuredError
+  cost?: MoneyUSD
+  tokens?: TokenUsageInfo
+}
+
+export type SessionMessageIdle = {
+  id: SessionMessageID
+  metadata?: { [x: string]: JsonValue }
+  time: { created: number }
+  type: "idle"
+  outcome: "succeeded" | "failed" | "interrupted"
+  error?: SessionStructuredError
 }
 
 export type SessionAgentSelected = {
@@ -2094,11 +2106,6 @@ export type SessionStatsInfo = {
   models: Array<SessionStatsModelUsage>
 }
 
-export type SessionMessageCompaction =
-  | SessionMessageCompactionRunning
-  | SessionMessageCompactionCompleted
-  | SessionMessageCompactionFailed
-
 export type ProviderRequest = {
   settings: ProviderSettings
   headers: { [x: string]: string }
@@ -2390,6 +2397,11 @@ export type SessionMessageAssistantTool = {
     | SessionMessageToolStateError
   time: { created: number; ran?: number; completed?: number }
 }
+
+export type SessionMessageCompaction =
+  | SessionMessageCompactionRunning
+  | SessionMessageCompactionCompleted
+  | SessionMessageCompactionFailed
 
 export type SessionInboxItem =
   | { type: "user"; payload: SessionInboxUserPayload1; delivery: SessionInboxDelivery }

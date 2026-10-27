@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { NonNegativeInt } from "@opencode/schema"
 import { Tool } from "@opencode/schema/tool"
+import { SessionError } from "@opencode/schema/session-error"
 import { ModelID, ProviderID, RouteID } from "./ids.js"
 
 export const ProviderFailureClassification = Schema.Literals(["context-overflow", "payload-too-large"])
@@ -25,6 +26,7 @@ const ReasonFields = {
   body: Schema.optional(Schema.String),
   http: Schema.optional(HttpContext),
   cause: Schema.optional(Schema.Defect({ includeStack: true })),
+  stream: Schema.optional(SessionError.StreamProgress),
 }
 
 export class InvalidRequestError extends Schema.TaggedError<InvalidRequestError>("AI.Error.InvalidRequest")(

@@ -405,9 +405,7 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
           provider: provider ?? routeInput.provider,
           providerMetadataKey:
             providerMetadataKey ??
-            (provider !== undefined && provider !== routeInput.provider
-              ? provider
-              : routeInput.providerMetadataKey),
+            (provider !== undefined && provider !== routeInput.provider ? provider : routeInput.providerMetadataKey),
           auth: auth ?? routeInput.auth,
           endpoint: endpoint ? Endpoint.merge(routeInput.endpoint, endpoint) : routeInput.endpoint,
           transport: (transport as Transport<Body, Prepared, Frame> | undefined) ?? routeInput.transport,
@@ -432,6 +430,9 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
           routeInput.transport.execute(prepared, request, runtime, options).pipe(
             Effect.map((execution) => {
               const terminal = protocol.stream.terminal
+              let decodedEvents = 0
+              let lastEventType: LLMEvent["type"] | undefined
+              let observedTerminal = false
               // Preserve assembled inputs; replace only serialized event fallbacks with their original wire data.
               const frameError =
                 (frame: Frame, event: Frame | Event = frame) =>
@@ -454,7 +455,11 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
                     Effect.catchCause((cause) =>
                       Effect.fail(streamError(route, `Failed to decode ${route} event`, cause)),
                     ),
-                    Effect.map((event) => ({ event, frame })),
+                    Effect.map((event) => {
+                      decodedEvents = Math.min(Number.MAX_SAFE_INTEGER, decodedEvents + 1)
+                      if (terminal?.(event)) observedTerminal = true
+                      return { event, frame }
+                    }),
                     Effect.mapError(frameError(frame)),
                   ),
                 ),
@@ -470,6 +475,11 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
                       ),
                       Effect.map(([next, output]) => {
                         state = next
+                        for (const event of output) {
+                          if (LLMEvent.is.raw(event)) continue
+                          lastEventType = event.type
+                          if (LLMEvent.is.finish(event) || LLMEvent.is.providerError(event)) observedTerminal = true
+                        }
                         return request.includeRaw && isProviderFrame(frame)
                           ? [LLMEvent.raw({ data: execution.raw?.(frame) ?? rawFrame(frame) }), ...output]
                           : output
@@ -498,8 +508,25 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
                         message: error.reason.message,
                         cause: error.reason.cause,
                         http: error.reason.http ?? execution.http,
+                        stream: {
+                          chunks: error.reason.stream?.chunks,
+                          bytes: error.reason.stream?.bytes,
+                          elapsedMs: error.reason.stream?.elapsedMs,
+                          contentType: error.reason.stream?.contentType,
+                          encoding: error.reason.stream?.encoding,
+                          decodedEvents,
+                          lastEventType,
+                          terminal: observedTerminal,
+                        },
                       }),
                     }),
+                ),
+                Stream.tapError((error) =>
+                  Effect.logWarning("Provider stream failed", {
+                    status: error.reason.http?.status,
+                    operation: error.reason._tag === "Transport" ? error.reason.operation : undefined,
+                    stream: error.reason.stream,
+                  }),
                 ),
               )
               return execution.complete ? stream.pipe(Stream.onEnd(execution.complete)) : stream

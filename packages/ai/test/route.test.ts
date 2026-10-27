@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Schema, Stream } from "effect"
+import { Effect, Logger, Schema, Stream } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat.js"
 import { AIError, HttpContext, InvalidProviderOutputError, LLM } from "../src/effect.js"
 import { Anthropic } from "../src/providers.js"
 import { Auth, Framing, HttpTransport, LLMClient, Route } from "../src/route.js"
 import { fixedResponse, truncatedStream } from "./lib/http.js"
-import { sseEvents } from "./lib/sse.js"
+import { sseEvents, sseRaw } from "./lib/sse.js"
+import { deltaChunk } from "./lib/openai-chunks.js"
 import { it } from "./lib/effect.js"
 
 describe("Route.with", () => {
@@ -61,6 +62,36 @@ describe("Route diagnostics", () => {
   const route = OpenAIChat.route.with({ endpoint: { baseURL: "https://provider.test/v1" } })
   const request = LLM.request({ model: route.model({ id: "test" }), prompt: "Hello" })
   const headers = { "content-type": "text/event-stream", "x-request-id": "req_stream" }
+
+  it.effect("retains payload-free progress after decoded events and a transport failure", () =>
+    Effect.gen(function* () {
+      const logged: Array<unknown> = []
+      const logger = Logger.make((entry) => logged.push(entry.message))
+      const chunks = [
+        sseRaw(`data: ${JSON.stringify(deltaChunk({ role: "assistant", content: "secret-generated-text" }))}`),
+        sseRaw(`data: ${JSON.stringify(deltaChunk({ content: "secret-reasoning-or-tool-arguments" }))}`),
+      ]
+      const error = yield* LLMClient.generate(request).pipe(
+        Effect.provide(truncatedStream(chunks, new Error("secret-native-message"))),
+        Effect.provide(Logger.layer([logger])),
+        Effect.flip,
+      )
+
+      expect(error.reason.stream).toMatchObject({
+        chunks: 2,
+        bytes: chunks.reduce((total, chunk) => total + new TextEncoder().encode(chunk).byteLength, 0),
+        decodedEvents: 2,
+        lastEventType: "text-delta",
+        terminal: false,
+        contentType: "text/event-stream",
+      })
+      expect(JSON.stringify(error.reason.stream)).not.toContain("secret")
+      expect(logged).toHaveLength(1)
+      expect(JSON.stringify(logged)).toContain("Provider stream failed")
+      expect(JSON.stringify(logged)).toContain("decodedEvents")
+      expect(JSON.stringify(logged)).not.toContain("secret")
+    }),
+  )
 
   it.effect("retains an entire invalid event and its validation cause", () =>
     Effect.gen(function* () {
