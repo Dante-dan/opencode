@@ -117,6 +117,18 @@ export const SessionsQuery = Schema.Struct({
   cursor: Session.ListCursor.pipe(Schema.optional),
 }).annotate({ identifier: "SessionsQuery" })
 
+// HTTP admission options and the response envelope belong to Protocol; the
+// prompt and admitted inbox entry remain canonical Schema domain contracts.
+export const SessionPromptPayload = Schema.Struct({
+  id: SessionMessage.ID.pipe(Schema.optional),
+  ...PromptInput.Prompt.fields,
+  metadata: SessionInbox.UserPayload.fields.metadata,
+  delivery: SessionInbox.Delivery.pipe(Schema.optional),
+  resume: Schema.Boolean.pipe(Schema.optional),
+})
+
+export const SessionPromptResponse = Schema.Struct({ data: SessionInbox.User })
+
 export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI extends HttpApiMiddleware.AnyId, FormS>(
   sessionLocationMiddleware: Context.Key<I, S>,
   formLocationMiddleware: Context.Key<FormI, FormS>,
@@ -336,14 +348,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
     .add(
       HttpApiEndpoint.post("session.prompt", "/api/session/:sessionID/prompt", {
         params: { sessionID: Session.ID },
-        payload: Schema.Struct({
-          id: SessionMessage.ID.pipe(Schema.optional),
-          ...PromptInput.Prompt.fields,
-          metadata: SessionInbox.UserPayload.fields.metadata,
-          delivery: SessionInbox.Delivery.pipe(Schema.optional),
-          resume: Schema.Boolean.pipe(Schema.optional),
-        }),
-        success: Schema.Struct({ data: SessionInbox.User }),
+        payload: SessionPromptPayload,
+        success: SessionPromptResponse,
         error: [ConflictError, InvalidRequestError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
